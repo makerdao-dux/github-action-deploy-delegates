@@ -14,9 +14,6 @@ export async function parse(
   | undefined
 > {
 
-    const allItemsCWD = fs.readdirSync(process.cwd());
-    console.log(allItemsCWD)
-
   const pathDelegates = path.join(process.cwd(), delegatesFolder);
   const pathTags = path.join(process.cwd(), tagsPath);
 

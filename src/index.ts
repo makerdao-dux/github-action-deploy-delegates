@@ -3,6 +3,8 @@ import * as core from '@actions/core'
 import { Credentials } from "./credentials";
 import { parse } from "./parse";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
+import fs from 'fs';
+
 try {
   const delegatesFolder = core.getInput("delegates-folder");
   const tagsPath = core.getInput("tags-file");
@@ -12,6 +14,10 @@ try {
     INFURA_ID,
     INFURA_SECRET_KEY,
   };
+
+  const allItemsCWD = fs.readdirSync(process.cwd());
+  core.setCommandEcho(true);
+  core.info(allItemsCWD.join(', '));
 
   parse(delegatesFolder, tagsPath)
     .then(async (data) => {
