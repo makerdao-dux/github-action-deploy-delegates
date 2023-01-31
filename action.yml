@@ -1,0 +1,17 @@
+name: 'Deploy Delegates'
+description: 'Parse and upload delegates information to a decentralized storage'
+inputs:
+  delegate-folder:  # path to the delegates folder
+    description: 'Path to the delegates folder'
+    required: true
+    default: 'governance/delegates'
+  tags-file:  # path to the tags mapping file
+    description: 'Path to the tags mapping file'
+    required: true
+    default: 'governance/delegates/meta/tags.json'
+outputs:
+  hash: # id of output
+    description: 'Hash of the uploaded file'
+runs:
+  using: 'node16'
+  main: 'index.js'
