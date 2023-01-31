@@ -15,10 +15,7 @@ try {
     INFURA_SECRET_KEY,
   };
 
-  const allItemsCWD = fs.readdirSync(process.cwd());
-  core.setCommandEcho(true);
-  core.info(allItemsCWD.join(', '));
-  console.log(allItemsCWD)
+
 
   parse(delegatesFolder, tagsPath)
     .then(async (data) => {
@@ -26,7 +23,7 @@ try {
         throw new Error("No data found");
       }
       // Upload all the images to IPFS
-      const delegates = data.delegates.map(async (delegate) => {
+      const delegates = await Promise.all(data.delegates.map(async (delegate) => {
         const image = delegate.image;
 
         if (image) {
@@ -34,9 +31,9 @@ try {
           delegate.image = hashImage;
         }
         return delegate;
-      });
+      }));
 
-      const uploadedHash = uploadTextIPFS(
+      const uploadedHash = await uploadTextIPFS(
         JSON.stringify(
           {
             delegates,

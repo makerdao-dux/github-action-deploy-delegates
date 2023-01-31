@@ -34,8 +34,8 @@ export async function parse(
   const tagsRaw = fs.readFileSync(tagsPath, "utf8");
   const tags = JSON.parse(tagsRaw);
 
-  console.log(delegates, tags);
-
+  console.log("Found", delegates.length, "delegates");
+  
   return Promise.resolve({
     tags,
     delegates,
