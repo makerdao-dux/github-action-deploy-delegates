@@ -33405,46 +33405,47 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
 const parse_1 = __nccwpck_require__(7065);
 const uploadIPFS_1 = __nccwpck_require__(9634);
-try {
-    const delegatesFolder = core.getInput("delegates-folder");
-    const tagsPath = core.getInput("tags-file");
-    const INFURA_ID = core.getInput("infura-id");
-    const INFURA_SECRET_KEY = core.getInput("infura-secret");
-    const credentials = {
-        INFURA_ID,
-        INFURA_SECRET_KEY,
-    };
-    (0, parse_1.parse)(delegatesFolder, tagsPath)
-        .then((data) => __awaiter(void 0, void 0, void 0, function* () {
-        if (!data) {
-            throw new Error("No data found");
-        }
-        // Upload all the images to IPFS
-        const delegates = yield Promise.all(data.delegates.map((delegate) => __awaiter(void 0, void 0, void 0, function* () {
-            const image = delegate.image;
-            if (image) {
-                const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, credentials);
-                delegate.image = hashImage;
+function run() {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            const delegatesFolder = core.getInput("delegates-folder");
+            const tagsPath = core.getInput("tags-file");
+            const INFURA_ID = core.getInput("infura-id");
+            const INFURA_SECRET_KEY = core.getInput("infura-secret");
+            const credentials = {
+                INFURA_ID,
+                INFURA_SECRET_KEY,
+            };
+            const data = yield (0, parse_1.parse)(delegatesFolder, tagsPath);
+            if (!data) {
+                throw new Error("No data found");
             }
-            return delegate;
-        })));
-        const uploadedHash = yield (0, uploadIPFS_1.uploadTextIPFS)(JSON.stringify({
-            delegates,
-            tags: data.tags,
-        }, null, 2), credentials);
-        console.log("Uploaded hash", uploadedHash);
-        core.setOutput("hash", uploadedHash);
-        // Get the JSON webhook payload for the event that triggered the workflow
-        // const payload = JSON.stringify(github.context.payload, undefined, 2);
-        // console.log(`The event payload: ${payload}`);
-    }))
-        .catch((error) => {
-        core.setFailed(error.message);
+            // Upload all the images to IPFS
+            const delegates = yield Promise.allSettled(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
+                const image = delegate.image;
+                if (image) {
+                    const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, credentials);
+                    delegate.image = hashImage;
+                }
+                return delegate;
+            })));
+            console.log('All images uploaded');
+            const uploadedHash = yield (0, uploadIPFS_1.uploadTextIPFS)(JSON.stringify({
+                delegates,
+                tags: data.tags,
+            }, null, 2), credentials);
+            console.log("Uploaded hash", uploadedHash);
+            core.setOutput("hash", uploadedHash);
+            // Get the JSON webhook payload for the event that triggered the workflow
+            // const payload = JSON.stringify(github.context.payload, undefined, 2);
+            // console.log(`The event payload: ${payload}`);
+        }
+        catch (error) {
+            core.setFailed(error.message);
+        }
     });
 }
-catch (error) {
-    core.setFailed(error.message);
-}
+run();
 
 
 /***/ }),
@@ -33649,7 +33650,9 @@ function uploadTextIPFS(text, credentials) {
         const client = getClient(credentials);
         /* upload the file */
         console.log("Uploading text to IPFS...", text.substring(0, 100) + "...");
-        const added = yield client.add(text);
+        const added = yield client.add(text, {
+            pin: true,
+        });
         console.log("Text uploaded to IPFS:", added.path);
         return added.path;
     });

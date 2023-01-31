@@ -1,29 +1,28 @@
-import * as core from '@actions/core'
+import * as core from "@actions/core";
 // import github from "@actions/github";
 import { Credentials } from "./credentials";
 import { parse } from "./parse";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
-import fs from 'fs';
+import fs from "fs";
 
-try {
-  const delegatesFolder = core.getInput("delegates-folder");
-  const tagsPath = core.getInput("tags-file");
-  const INFURA_ID = core.getInput("infura-id");
-  const INFURA_SECRET_KEY = core.getInput("infura-secret");
-  const credentials: Credentials = {
-    INFURA_ID,
-    INFURA_SECRET_KEY,
-  };
+async function run() {
+  try {
+    const delegatesFolder = core.getInput("delegates-folder");
+    const tagsPath = core.getInput("tags-file");
+    const INFURA_ID = core.getInput("infura-id");
+    const INFURA_SECRET_KEY = core.getInput("infura-secret");
+    const credentials: Credentials = {
+      INFURA_ID,
+      INFURA_SECRET_KEY,
+    };
 
-
-
-  parse(delegatesFolder, tagsPath)
-    .then(async (data) => {
-      if (!data) {
-        throw new Error("No data found");
-      }
-      // Upload all the images to IPFS
-      const delegates = await Promise.all(data.delegates.map(async (delegate) => {
+    const data = await parse(delegatesFolder, tagsPath);
+    if (!data) {
+      throw new Error("No data found");
+    }
+    // Upload all the images to IPFS
+    const delegates = await Promise.allSettled(
+      data.delegates.map(async (delegate) => {
         const image = delegate.image;
 
         if (image) {
@@ -31,30 +30,32 @@ try {
           delegate.image = hashImage;
         }
         return delegate;
-      }));
+      })
+    );
 
-      const uploadedHash = await uploadTextIPFS(
-        JSON.stringify(
-          {
-            delegates,
-            tags: data.tags,
-          },
-          null,
-          2
-        ),
-        credentials
-      );
-      console.log("Uploaded hash", uploadedHash);
+    console.log('All images uploaded');
 
-      core.setOutput("hash", uploadedHash);
+    const uploadedHash = await uploadTextIPFS(
+      JSON.stringify(
+        {
+          delegates,
+          tags: data.tags,
+        },
+        null,
+        2
+      ),
+      credentials
+    );
+    console.log("Uploaded hash", uploadedHash);
 
-      // Get the JSON webhook payload for the event that triggered the workflow
-      // const payload = JSON.stringify(github.context.payload, undefined, 2);
-      // console.log(`The event payload: ${payload}`);
-    })
-    .catch((error: any) => {
-      core.setFailed(error.message);
-    });
-} catch (error: any) {
-  core.setFailed(error.message);
+    core.setOutput("hash", uploadedHash);
+
+    // Get the JSON webhook payload for the event that triggered the workflow
+    // const payload = JSON.stringify(github.context.payload, undefined, 2);
+    // console.log(`The event payload: ${payload}`);
+  } catch (error: any) {
+    core.setFailed(error.message);
+  }
 }
+
+run();

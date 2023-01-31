@@ -41,7 +41,10 @@ export async function uploadTextIPFS(
   const client = getClient(credentials);
   /* upload the file */
   console.log("Uploading text to IPFS...", text.substring(0, 100) + "...");
-  const added = await client.add(text);
+  const added = await client.add(text, {
+    pin: true,
+    
+  });
   console.log("Text uploaded to IPFS:", added.path);
   return added.path;
 }
