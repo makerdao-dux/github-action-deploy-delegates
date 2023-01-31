@@ -33421,6 +33421,7 @@ try {
     const allItemsCWD = fs_1.default.readdirSync(process.cwd());
     core.setCommandEcho(true);
     core.info(allItemsCWD.join(', '));
+    console.log(allItemsCWD);
     (0, parse_1.parse)(delegatesFolder, tagsPath)
         .then((data) => __awaiter(void 0, void 0, void 0, function* () {
         if (!data) {

@@ -18,6 +18,7 @@ try {
   const allItemsCWD = fs.readdirSync(process.cwd());
   core.setCommandEcho(true);
   core.info(allItemsCWD.join(', '));
+  console.log(allItemsCWD)
 
   parse(delegatesFolder, tagsPath)
     .then(async (data) => {
