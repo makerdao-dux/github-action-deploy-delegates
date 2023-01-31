@@ -1,7 +1,7 @@
 name: 'Deploy Delegates'
 description: 'Parse and upload delegates information to a decentralized storage'
 inputs:
-  delegate-folder:  # path to the delegates folder
+  delegates-folder:  # path to the delegates folder
     description: 'Path to the delegates folder'
     required: true
     default: 'governance/delegates'

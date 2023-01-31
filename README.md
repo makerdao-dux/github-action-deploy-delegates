@@ -29,8 +29,10 @@ The file hash that has been uploaded to the decentralized storage.
 ## Example usage
 
 ```yaml
-uses: actions/action-deploy-delegates@v1.1
+uses: makerdao-dux/action-deploy-delegates@v1.1
 with:
   delegates-folder: "governance/delegates"
   tags-file: "governance/delegates/meta/tags.json"
+  infura-id: ${{ secrets.INFURA_ID }}
+  infura-secret: ${{ secrets.INFURA_KEY }}
 ```

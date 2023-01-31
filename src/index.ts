@@ -5,7 +5,7 @@ import { parse } from "./parse";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
 try {
   const delegatesFolder = core.getInput("delegates-folder");
-  const tagsPath = core.getInput("tags-path");
+  const tagsPath = core.getInput("tags-file");
   const INFURA_ID = core.getInput("infura-id");
   const INFURA_SECRET_KEY = core.getInput("infura-secret");
   const credentials: Credentials = {
