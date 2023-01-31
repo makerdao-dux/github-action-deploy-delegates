@@ -1,5 +1,8 @@
 name: 'Deploy Delegates'
 description: 'Parse and upload delegates information to a decentralized storage'
+branding:
+  icon: 'award'
+  color: 'green'
 inputs:
   delegates-folder:  # path to the delegates folder
     description: 'Path to the delegates folder'
