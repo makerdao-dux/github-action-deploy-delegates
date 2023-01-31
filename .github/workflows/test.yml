@@ -14,11 +14,18 @@ jobs:
       - run: |
           npm install
       - run: |
-          npm run all
-  test: # make sure the action works on a clean machine without building
+          npm run build
+
+  test-unit: # make sure the action works on a clean machine without building
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: ./
-        with:
-          milliseconds: 1000
+      - run: |
+          npm run test
+  # test: # make sure the action works on a clean machine without building
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - uses: ./
+  #       with:
+  #         milliseconds: 1000
