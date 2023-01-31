@@ -1,6 +1,7 @@
 import fs from "fs";
 import { Delegate, Tag } from "./delegate";
 import path from "path";
+import { parseDelegateFolder } from "./parseDelegatesFolder";
 
 export async function parse(
   delegatesFolder: string,
@@ -27,7 +28,7 @@ export async function parse(
   const allItems = fs.readdirSync(delegatesFolder);
 
   // Filter delegates, only get items that start by 0x
-  const delegates = allItems.filter((item) => item.startsWith("0x"));
+  const delegates = allItems.filter((item) => item.startsWith("0x")).map((folder) => parseDelegateFolder(pathDelegates, folder));
 
   const tagsRaw = fs.readFileSync(tagsPath, "utf8");
   const tags = JSON.parse(tagsRaw);
@@ -36,6 +37,6 @@ export async function parse(
 
   return Promise.resolve({
     tags,
-    delegates: [],
+    delegates,
   });
 }

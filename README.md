@@ -6,11 +6,19 @@ This action analyzes the configured "delegates" folder and parses the data to cr
 
 ### `delegates-folder`
 
-**Required** The path to the folder with the delegates information. Default:  `governance/delegates`.
+**Required** The path to the folder with the delegates information. Default: `governance/delegates`.
 
 ### `tags-file`
 
 **Required** The file with the tags mapping/definitions. Default: `governance/delegates/meta/tags.json`.
+
+### `infura-id`
+
+**Required** Infura IPFS project ID
+
+### `infura-secret`
+
+**Required** Infura IPFS project secret
 
 ## Outputs
 
@@ -23,6 +31,6 @@ The file hash that has been uploaded to the decentralized storage.
 ```yaml
 uses: actions/action-deploy-delegates@v1.1
 with:
-  delegates-folder: 'governance/delegates'
-  tags-file: 'governance/delegates/meta/tags.json'
+  delegates-folder: "governance/delegates"
+  tags-file: "governance/delegates/meta/tags.json"
 ```

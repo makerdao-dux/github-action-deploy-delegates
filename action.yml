@@ -9,6 +9,12 @@ inputs:
     description: 'Path to the tags mapping file'
     required: true
     default: 'governance/delegates/meta/tags.json'
+  infura-id:
+    description: 'Infura project id'
+    required: true
+  infura-secret:
+    description: 'Infura API key secret'
+    required: true
 outputs:
   hash: # id of output
     description: 'Hash of the uploaded file'
