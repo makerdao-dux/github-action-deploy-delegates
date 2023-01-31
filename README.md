@@ -29,7 +29,7 @@ The file hash that has been uploaded to the decentralized storage.
 ## Example usage
 
 ```yaml
-uses: makerdao-dux/github-action-deploy-delegates@v1.1.0
+uses: makerdao-dux/github-action-deploy-delegates@v1.1.1
 with:
   delegates-folder: "governance/delegates"
   tags-file: "governance/delegates/meta/tags.json"
