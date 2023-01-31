@@ -29,10 +29,14 @@ The file hash that has been uploaded to the decentralized storage.
 ## Example usage
 
 ```yaml
-uses: makerdao-dux/github-action-deploy-delegates@v1.1.2
+uses: makerdao-dux/github-action-deploy-delegates@v1.1.4
 with:
   delegates-folder: "governance/delegates"
   tags-file: "governance/delegates/meta/tags.json"
   infura-id: ${{ secrets.INFURA_ID }}
   infura-secret: ${{ secrets.INFURA_KEY }}
 ```
+
+Based on:
+- https://github.com/actions/typescript-action
+- https://docs.github.com/en/actions/creating-actions/creating-a-javascript-action

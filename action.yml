@@ -23,4 +23,4 @@ outputs:
     description: 'Hash of the uploaded file'
 runs:
   using: 'node16'
-  main: 'lib/index.js'
+  main: 'dist/index.js'
