@@ -33421,11 +33421,16 @@ function run() {
                 throw new Error("No data found");
             }
             // Upload all the images to IPFS
-            const delegates = yield Promise.allSettled(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
+            const delegates = yield Promise.all(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
                 const image = delegate.image;
-                if (image) {
-                    const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, credentials);
-                    delegate.image = hashImage;
+                try {
+                    if (image) {
+                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, credentials);
+                        delegate.image = hashImage;
+                    }
+                }
+                catch (e) {
+                    console.error('Error uploading image', image, e.message);
                 }
                 return delegate;
             })));

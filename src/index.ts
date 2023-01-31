@@ -3,7 +3,6 @@ import * as core from "@actions/core";
 import { Credentials } from "./credentials";
 import { parse } from "./parse";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
-import fs from "fs";
 
 async function run() {
   try {
@@ -21,14 +20,19 @@ async function run() {
       throw new Error("No data found");
     }
     // Upload all the images to IPFS
-    const delegates = await Promise.allSettled(
+    const delegates = await Promise.all(
       data.delegates.map(async (delegate) => {
         const image = delegate.image;
 
-        if (image) {
-          const hashImage = await uploadFileIPFS(image, credentials);
-          delegate.image = hashImage;
+        try {
+          if (image) {
+            const hashImage = await uploadFileIPFS(image, credentials);
+            delegate.image = hashImage;
+          }
+        } catch(e: any) {
+          console.error('Error uploading image', image, e.message);
         }
+        
         return delegate;
       })
     );
