@@ -3,6 +3,7 @@ import * as core from "@actions/core";
 import { Credentials } from "./credentials";
 import { parse } from "./parse";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
+import fs from 'fs';
 
 async function run() {
   try {
@@ -38,21 +39,28 @@ async function run() {
     );
 
     console.log('All images uploaded');
+    const fileContents = JSON.stringify(
+      {
+        delegates,
+        tags: data.tags,
+      },
+      null,
+      2
+    );
 
     const uploadedHash = await uploadTextIPFS(
-      JSON.stringify(
-        {
-          delegates,
-          tags: data.tags,
-        },
-        null,
-        2
-      ),
+      fileContents,
       credentials
     );
     console.log("Uploaded hash", uploadedHash);
 
     core.setOutput("hash", uploadedHash);
+
+    const outputFile = core.getInput("output-file");
+
+    if(outputFile) {
+      fs.writeFileSync(outputFile, fileContents)
+    }
 
     // Get the JSON webhook payload for the event that triggered the workflow
     // const payload = JSON.stringify(github.context.payload, undefined, 2);

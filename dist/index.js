@@ -33401,10 +33401,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
 const parse_1 = __nccwpck_require__(7065);
 const uploadIPFS_1 = __nccwpck_require__(9634);
+const fs_1 = __importDefault(__nccwpck_require__(7147));
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -33435,12 +33439,17 @@ function run() {
                 return delegate;
             })));
             console.log('All images uploaded');
-            const uploadedHash = yield (0, uploadIPFS_1.uploadTextIPFS)(JSON.stringify({
+            const fileContents = JSON.stringify({
                 delegates,
                 tags: data.tags,
-            }, null, 2), credentials);
+            }, null, 2);
+            const uploadedHash = yield (0, uploadIPFS_1.uploadTextIPFS)(fileContents, credentials);
             console.log("Uploaded hash", uploadedHash);
             core.setOutput("hash", uploadedHash);
+            const outputFile = core.getInput("output-file");
+            if (outputFile) {
+                fs_1.default.writeFileSync(outputFile, fileContents);
+            }
             // Get the JSON webhook payload for the event that triggered the workflow
             // const payload = JSON.stringify(github.context.payload, undefined, 2);
             // console.log(`The event payload: ${payload}`);

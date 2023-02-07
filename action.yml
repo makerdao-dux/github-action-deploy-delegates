@@ -18,6 +18,8 @@ inputs:
   infura-secret:
     description: 'Infura API key secret'
     required: true
+  output-file:
+    description: 'The file that will be added to disk (leave empty for no output file)'
 outputs:
   hash: # id of output
     description: 'Hash of the uploaded file'

@@ -20,6 +20,10 @@ This action analyzes the configured "delegates" folder and parses the data to cr
 
 **Required** Infura IPFS project secret
 
+### `output-file`
+
+If specified, the path of the file to be written to disk
+
 ## Outputs
 
 ### `hash`
@@ -56,6 +60,7 @@ jobs:
           tags-file: 'governance/delegates/meta/tags.json'
           infura-id: ${{ secrets.INFURA_ID }}
           infura-secret: ${{ secrets.INFURA_KEY }}
+          output-file: 'governance/delegates/data.json'
       # Use the output from the `upload` step
       - name: Get the output hash
         run: echo "The IPFS hash was ${{ steps.upload.outputs.hash }}"
