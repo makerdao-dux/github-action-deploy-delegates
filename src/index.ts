@@ -32,6 +32,7 @@ async function run() {
           }
         } catch(e: any) {
           console.error('Error uploading image', image, e.message);
+          delegate.image = '';
         }
         
         return delegate;
