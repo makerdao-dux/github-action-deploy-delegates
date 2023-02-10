@@ -11,6 +11,7 @@ export type Delegate = {
   image: string;
   profile: Profile;
   metrics: Metrics;
+  cuMember: boolean
 };
 
 export type Profile = {

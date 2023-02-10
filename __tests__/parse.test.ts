@@ -27,7 +27,7 @@ test('Finds the delegates and parses them correctly', async () => {
     expect(result.delegates[0].profile).toBeDefined();
     expect(result.delegates[0].metrics).toBeDefined();
     expect(result.delegates[0].image).toBeDefined();
-
+    expect(result.delegates[0].cuMember).toBe(true);
     expect(result.delegates[0].profile.name).toBeDefined();
     expect(result.delegates[0].profile.description).toBeDefined();
     expect(result.delegates[0].profile.tags).toBeDefined();
