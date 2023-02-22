@@ -22,16 +22,26 @@ function getClient(credentials: Credentials) {
 }
 export async function uploadFileIPFS(
   filePath: string,
-  credentials: Credentials
+  credentials: Credentials, 
+  retries: number = 3
 ): Promise<string> {
-  const client = getClient(credentials);
-  /* upload the file */
-  console.log("Uploading file to IPFS...", filePath);
-  const file = fs.readFileSync(filePath);
-  const added = await client.add(file);
-  console.log("File uploaded to IPFS:", added.path);
+  try {
+    const client = getClient(credentials);
+    /* upload the file */
+    console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
+    const file = fs.readFileSync(filePath);
+    const added = await client.add(file);
+    console.log("File uploaded to IPFS:", added.path);
 
-  return added.path;
+    return added.path;
+  } catch(e) {
+    if (retries > 0) {
+      console.log('Retrying upload', retries);
+      return uploadFileIPFS(filePath, credentials, retries - 1);
+    } else {
+      throw e;
+    }
+  }
 }
 
 export async function uploadTextIPFS(

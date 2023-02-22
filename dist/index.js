@@ -33435,6 +33435,7 @@ function run() {
                 }
                 catch (e) {
                     console.error('Error uploading image', image, e.message);
+                    delegate.image = '';
                 }
                 return delegate;
             })));
@@ -33531,10 +33532,13 @@ const parseProfile_1 = __nccwpck_require__(8854);
 const parseMetrics_1 = __nccwpck_require__(1187);
 function parseDelegateFolder(delegatesFolderPath, folder) {
     const contents = fs_1.default.readdirSync(path_1.default.join(delegatesFolderPath, folder));
-    const image = contents.find(item => item.startsWith('avatar'));
-    const profileFilePath = path_1.default.join(delegatesFolderPath, folder, 'profile.md');
-    const metricsFilePath = path_1.default.join(delegatesFolderPath, folder, 'metrics.md');
-    const imageFilePath = image ? path_1.default.join(delegatesFolderPath, folder, image) : '';
+    const image = contents.find((item) => item.startsWith("avatar"));
+    const profileFilePath = path_1.default.join(delegatesFolderPath, folder, "profile.md");
+    const cumemberFilePath = path_1.default.join(delegatesFolderPath, folder, "cumember.md");
+    const metricsFilePath = path_1.default.join(delegatesFolderPath, folder, "metrics.md");
+    const imageFilePath = image
+        ? path_1.default.join(delegatesFolderPath, folder, image)
+        : "";
     if (!fs_1.default.existsSync(profileFilePath)) {
         console.error(profileFilePath, "Profile file not found");
         throw new Error("Profile file does not exist for delegate " + folder);
@@ -33550,7 +33554,8 @@ function parseDelegateFolder(delegatesFolderPath, folder) {
         voteDelegateAddress: folder,
         profile,
         image: imageFilePath,
-        metrics
+        metrics,
+        cuMember: fs_1.default.existsSync(cumemberFilePath),
     };
 }
 exports.parseDelegateFolder = parseDelegateFolder;
@@ -33647,15 +33652,26 @@ function getClient(credentials) {
     });
     return client;
 }
-function uploadFileIPFS(filePath, credentials) {
+function uploadFileIPFS(filePath, credentials, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
-        const client = getClient(credentials);
-        /* upload the file */
-        console.log("Uploading file to IPFS...", filePath);
-        const file = fs_1.default.readFileSync(filePath);
-        const added = yield client.add(file);
-        console.log("File uploaded to IPFS:", added.path);
-        return added.path;
+        try {
+            const client = getClient(credentials);
+            /* upload the file */
+            console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
+            const file = fs_1.default.readFileSync(filePath);
+            const added = yield client.add(file);
+            console.log("File uploaded to IPFS:", added.path);
+            return added.path;
+        }
+        catch (e) {
+            if (retries > 0) {
+                console.log('Retrying upload', retries);
+                return uploadFileIPFS(filePath, credentials, retries - 1);
+            }
+            else {
+                throw e;
+            }
+        }
     });
 }
 exports.uploadFileIPFS = uploadFileIPFS;
