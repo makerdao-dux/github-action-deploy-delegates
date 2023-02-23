@@ -19,6 +19,8 @@ test('Finds the DVCS and parses them correctly', async () => {
     expect(result[0].strategies[0].name).toBeDefined();
     expect(result[0].strategies[0].description).toBeDefined();
     expect(result[0].strategies[0].delegates.length).toBeGreaterThan(0);
+
+    console.log(result[0].strategies[0].delegates[0]);
   } else {
     throw new Error('Result is undefined');
   }
