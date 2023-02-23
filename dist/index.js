@@ -33406,13 +33406,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
-const parse_1 = __nccwpck_require__(7065);
+const parseDelegates_1 = __nccwpck_require__(7326);
 const uploadIPFS_1 = __nccwpck_require__(9634);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
+const parseVotingCommittees_1 = __nccwpck_require__(7435);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             const delegatesFolder = core.getInput("delegates-folder");
+            const delegateVotingCommitteesFolder = core.getInput("voting-committees-folder");
             const tagsPath = core.getInput("tags-file");
             const INFURA_ID = core.getInput("infura-id");
             const INFURA_SECRET_KEY = core.getInput("infura-secret");
@@ -33420,7 +33422,7 @@ function run() {
                 INFURA_ID,
                 INFURA_SECRET_KEY,
             };
-            const data = yield (0, parse_1.parse)(delegatesFolder, tagsPath);
+            const data = yield (0, parseDelegates_1.parseDelegates)(delegatesFolder, tagsPath);
             if (!data) {
                 throw new Error("No data found");
             }
@@ -33439,10 +33441,28 @@ function run() {
                 }
                 return delegate;
             })));
+            console.log('Reading voting committees');
+            const votingCommittees = yield (0, parseVotingCommittees_1.parseVotingCommittees)(delegateVotingCommitteesFolder);
+            console.log('Uploading voting committees images to ipfs');
+            const votingCommitteesWithImages = yield Promise.all(votingCommittees.map((votingCommittee) => __awaiter(this, void 0, void 0, function* () {
+                const image = votingCommittee.image;
+                try {
+                    if (image) {
+                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, credentials);
+                        votingCommittee.image = hashImage;
+                    }
+                }
+                catch (e) {
+                    console.error('Error uploading image', image, e.message);
+                    votingCommittee.image = '';
+                }
+                return votingCommittee;
+            })));
             console.log('All images uploaded');
             const fileContents = JSON.stringify({
                 delegates,
                 tags: data.tags,
+                votingCommittees: votingCommitteesWithImages
             }, null, 2);
             const uploadedHash = yield (0, uploadIPFS_1.uploadTextIPFS)(fileContents, credentials);
             console.log("Uploaded hash", uploadedHash);
@@ -33465,58 +33485,7 @@ run();
 
 /***/ }),
 
-/***/ 7065:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parse = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const path_1 = __importDefault(__nccwpck_require__(1017));
-const parseDelegatesFolder_1 = __nccwpck_require__(4084);
-function parse(delegatesFolder, tagsPath) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const pathDelegates = path_1.default.join(process.cwd(), delegatesFolder);
-        const pathTags = path_1.default.join(process.cwd(), tagsPath);
-        if (!fs_1.default.existsSync(pathDelegates)) {
-            console.error(pathDelegates, "Delegates folder not found");
-            throw new Error("Delegates folder does not exist");
-        }
-        if (!fs_1.default.existsSync(pathTags)) {
-            console.error(pathTags, "Tags file not found");
-            throw new Error("Tags file does not exist");
-        }
-        const allItems = fs_1.default.readdirSync(delegatesFolder);
-        // Filter delegates, only get items that start by 0x
-        const delegates = allItems.filter((item) => item.startsWith("0x")).map((folder) => (0, parseDelegatesFolder_1.parseDelegateFolder)(pathDelegates, folder));
-        const tagsRaw = fs_1.default.readFileSync(tagsPath, "utf8");
-        const tags = JSON.parse(tagsRaw);
-        console.log("Found", delegates.length, "delegates");
-        return Promise.resolve({
-            tags,
-            delegates,
-        });
-    });
-}
-exports.parse = parse;
-
-
-/***/ }),
-
-/***/ 4084:
+/***/ 8253:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -33549,7 +33518,6 @@ function parseDelegateFolder(delegatesFolderPath, folder) {
     }
     const profile = (0, parseProfile_1.parseProfile)(profileFilePath);
     const metrics = (0, parseMetrics_1.parseMetrics)(metricsFilePath);
-    // TODO: Upload image to IPFS and return the hash
     return {
         voteDelegateAddress: folder,
         profile,
@@ -33559,6 +33527,113 @@ function parseDelegateFolder(delegatesFolderPath, folder) {
     };
 }
 exports.parseDelegateFolder = parseDelegateFolder;
+
+
+/***/ }),
+
+/***/ 9362:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseDelegateVotingCommitteeFolder = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const parseProfile_1 = __nccwpck_require__(8854);
+const parseStrategy_1 = __nccwpck_require__(5753);
+function parseDelegateVotingCommitteeFolder(dvcsFolderPath, folder) {
+    const contents = fs_1.default.readdirSync(path_1.default.join(dvcsFolderPath, folder));
+    // Search for the image file
+    const image = contents.find((item) => item.startsWith("avatar"));
+    const imageFilePath = image
+        ? path_1.default.join(dvcsFolderPath, folder, image)
+        : "";
+    // Search for the profile file
+    const profileFilePath = path_1.default.join(dvcsFolderPath, folder, "profile.md");
+    const strategiesFolder = path_1.default.join(dvcsFolderPath, folder, "strategies");
+    if (!fs_1.default.existsSync(profileFilePath)) {
+        console.error(profileFilePath, "Profile file not found");
+        throw new Error("Profile file does not exist for delegate " + folder);
+    }
+    if (!fs_1.default.existsSync(strategiesFolder)) {
+        console.error(strategiesFolder, "Strategies folder not found");
+        throw new Error("Strategies folder does not exist for DVC: " + folder);
+    }
+    // Read all files inside the strategies folder
+    const strategies = fs_1.default.readdirSync(strategiesFolder)
+        // filter ending by .md
+        .filter((strategyFile) => strategyFile.endsWith(".md"))
+        .map((strategyFile) => {
+        const strategyFilePath = path_1.default.join(strategiesFolder, strategyFile);
+        // Parse the markdown file
+        const strategy = (0, parseStrategy_1.parseStrategy)(strategyFilePath);
+        return strategy;
+    });
+    const profile = (0, parseProfile_1.parseProfile)(profileFilePath);
+    return {
+        name: profile.name,
+        image: imageFilePath,
+        externalProfileURL: profile.externalProfileURL,
+        description: profile.description,
+        strategies
+    };
+}
+exports.parseDelegateVotingCommitteeFolder = parseDelegateVotingCommitteeFolder;
+
+
+/***/ }),
+
+/***/ 7326:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseDelegates = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const parseDelegateFolder_1 = __nccwpck_require__(8253);
+function parseDelegates(delegatesFolder, tagsPath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const pathDelegates = path_1.default.join(process.cwd(), delegatesFolder);
+        const pathTags = path_1.default.join(process.cwd(), tagsPath);
+        if (!fs_1.default.existsSync(pathDelegates)) {
+            console.error(pathDelegates, "Delegates folder not found");
+            throw new Error("Delegates folder does not exist");
+        }
+        if (!fs_1.default.existsSync(pathTags)) {
+            console.error(pathTags, "Tags file not found");
+            throw new Error("Tags file does not exist");
+        }
+        const allItems = fs_1.default.readdirSync(delegatesFolder);
+        // Filter delegates, only get items that start by 0x
+        const delegates = allItems.filter((item) => item.startsWith("0x")).map((folder) => (0, parseDelegateFolder_1.parseDelegateFolder)(pathDelegates, folder));
+        const tagsRaw = fs_1.default.readFileSync(tagsPath, "utf8");
+        const tags = JSON.parse(tagsRaw);
+        console.log("Found", delegates.length, "delegates");
+        return Promise.resolve({
+            tags,
+            delegates,
+        });
+    });
+}
+exports.parseDelegates = parseDelegates;
 
 
 /***/ }),
@@ -33613,6 +33688,72 @@ function parseProfile(profileFilePath) {
     };
 }
 exports.parseProfile = parseProfile;
+
+
+/***/ }),
+
+/***/ 5753:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseStrategy = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const front_matter_1 = __importDefault(__nccwpck_require__(7646));
+function parseStrategy(strategyFilePath) {
+    const strategyContent = fs_1.default.readFileSync(strategyFilePath, "utf8");
+    const { body, attributes: { name, delegates }, } = (0, front_matter_1.default)(strategyContent);
+    return {
+        name,
+        description: body,
+        delegates
+    };
+}
+exports.parseStrategy = parseStrategy;
+
+
+/***/ }),
+
+/***/ 7435:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseVotingCommittees = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const parseDelegateVotingCommitteeFolder_1 = __nccwpck_require__(9362);
+function parseVotingCommittees(dvcsFolder) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const pathDvcs = path_1.default.join(process.cwd(), dvcsFolder);
+        if (!fs_1.default.existsSync(pathDvcs)) {
+            console.error(pathDvcs, "Delegate Voting Committees folder not found");
+            throw new Error("Delegate Voting Committees folder does not exist");
+        }
+        const allItems = fs_1.default.readdirSync(pathDvcs);
+        const dvcs = allItems.map((folder) => (0, parseDelegateVotingCommitteeFolder_1.parseDelegateVotingCommitteeFolder)(pathDvcs, folder));
+        console.log("Found", dvcs.length, "Delegate Voting Committees");
+        return Promise.resolve(dvcs);
+    });
+}
+exports.parseVotingCommittees = parseVotingCommittees;
 
 
 /***/ }),

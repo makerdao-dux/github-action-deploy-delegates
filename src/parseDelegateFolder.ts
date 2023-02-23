@@ -34,8 +34,6 @@ export function parseDelegateFolder(
   const profile = parseProfile(profileFilePath);
   const metrics = parseMetrics(metricsFilePath);
 
-  // TODO: Upload image to IPFS and return the hash
-
   return {
     voteDelegateAddress: folder,
     profile,

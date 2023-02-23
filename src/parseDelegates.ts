@@ -1,9 +1,9 @@
 import fs from "fs";
 import { Delegate, Tag } from "./delegate";
 import path from "path";
-import { parseDelegateFolder } from "./parseDelegatesFolder";
+import { parseDelegateFolder } from "./parseDelegateFolder";
 
-export async function parse(
+export async function parseDelegates(
   delegatesFolder: string,
   tagsPath: string
 ): Promise<

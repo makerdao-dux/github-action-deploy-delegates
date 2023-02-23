@@ -1,9 +1,9 @@
 
 import {expect, test} from '@jest/globals'
-import { parse } from '../src/parse';
+import { parseDelegates } from '../src/parseDelegates';
 
 test('Finds the tags file', async () => {
-  const result = await parse('__tests__/delegates', '__tests__/delegates/tags.json');
+  const result = await parseDelegates('__tests__/delegates', '__tests__/delegates/tags.json');
 
   expect(result).toBeDefined();
 
@@ -18,7 +18,7 @@ test('Finds the tags file', async () => {
 
 
 test('Finds the delegates and parses them correctly', async () => {
-  const result = await parse('__tests__/delegates', '__tests__/delegates/tags.json');
+  const result = await parseDelegates('__tests__/delegates', '__tests__/delegates/tags.json');
   expect(result).toBeDefined();
 
   if (result) {
@@ -42,9 +42,9 @@ test('Finds the delegates and parses them correctly', async () => {
 });
 
 test('Throws an error if the delegates folder does not exist', async () => {
-  await expect(parse('does-not-exist', '__tests__/delegates/tags.json')).rejects.toThrowError();
+  await expect(parseDelegates('does-not-exist', '__tests__/delegates/tags.json')).rejects.toThrowError();
 });
 
 test('Throws an error if the tags file does not exist', async () => {
-  await expect(parse('__tests__/delegates', 'does-not-exist')).rejects.toThrowError();
+  await expect(parseDelegates('__tests__/delegates', 'does-not-exist')).rejects.toThrowError();
 });
