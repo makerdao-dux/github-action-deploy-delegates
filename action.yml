@@ -11,7 +11,7 @@ inputs:
   voting-committees-folder:  # path to the dvcs folder
     description: 'Path to the delegate voting committees folder'
     required: true
-    default: 'governance/delegates'
+    default: 'governance/voting-committees'
   tags-file:  # path to the tags mapping file
     description: 'Path to the tags mapping file'
     required: true

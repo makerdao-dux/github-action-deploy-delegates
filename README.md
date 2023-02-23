@@ -8,6 +8,11 @@ This action analyzes the configured "delegates" folder and parses the data to cr
 
 **Required** The path to the folder with the delegates information. Default: `governance/delegates`.
 
+### `voting-committees-folder`
+
+**Required** The path to the folder with the DVCs information. Default: `governance/voting-committees`.
+
+
 ### `tags-file`
 
 **Required** The file with the tags mapping/definitions. Default: `governance/delegates/meta/tags.json`.

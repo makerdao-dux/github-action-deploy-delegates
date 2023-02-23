@@ -6,7 +6,7 @@ export type Strategy = {
 
 export type DelelegateVotingCommittee = {
     name: string;
-    image: string;
+    image?: string;
     externalProfileURL: string;
     description: string;
     strategies: Strategy[];
