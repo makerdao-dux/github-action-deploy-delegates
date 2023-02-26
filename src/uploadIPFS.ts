@@ -1,6 +1,8 @@
 import { create } from "ipfs-http-client";
 import { Credentials } from "./credentials";
 import fs from "fs";
+import * as IPFS from 'ipfs-core';
+
 // For more information about the IPFS API, see: https://www.npmjs.com/package/ipfs-http-client
 function getClient(credentials: Credentials) {
   const auth =
@@ -26,6 +28,8 @@ export async function uploadFileIPFS(
   retries: number = 3
 ): Promise<string> {
   try {
+    const ipfs = await IPFS.create();
+    console.log('ipfs', ipfs);
     const client = getClient(credentials);
     /* upload the file */
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
