@@ -22,14 +22,20 @@ function getClient(credentials: Credentials) {
 
   return client;
 }
+
+export async function generateCarFile(text: string) {
+  const ipfs = await IPFS.create();
+  console.log('ipfs', ipfs);
+}
+
+
 export async function uploadFileIPFS(
   filePath: string,
   credentials: Credentials, 
   retries: number = 3
 ): Promise<string> {
   try {
-    const ipfs = await IPFS.create();
-    console.log('ipfs', ipfs);
+
     const client = getClient(credentials);
     /* upload the file */
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
