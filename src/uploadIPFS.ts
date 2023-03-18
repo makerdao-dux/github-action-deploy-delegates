@@ -1,6 +1,9 @@
 import { create } from "ipfs-http-client";
 import { Credentials } from "./credentials";
 import fs from "fs";
+import { packToFs } from 'ipfs-car/pack/fs';
+import { FsBlockStore } from 'ipfs-car/blockstore/fs';
+
 // For more information about the IPFS API, see: https://www.npmjs.com/package/ipfs-http-client
 function getClient(credentials: Credentials) {
   const auth =
@@ -20,6 +23,19 @@ function getClient(credentials: Credentials) {
 
   return client;
 }
+
+//takes in filePath, returns car file
+export async function getCarFile(filePath: string) {
+  const carFileName = "carFile.car";
+  await packToFs({
+    input: filePath,
+    output: carFileName,
+    blockstore: new FsBlockStore()
+  });
+  return fs.readFileSync(carFileName);
+}
+
+
 export async function uploadFileIPFS(
   filePath: string,
   credentials: Credentials, 
@@ -29,7 +45,7 @@ export async function uploadFileIPFS(
     const client = getClient(credentials);
     /* upload the file */
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-    const file = fs.readFileSync(filePath);
+    const file = await getCarFile(filePath);
     const added = await client.add(file);
     console.log("File uploaded to IPFS:", added.path);
 
