@@ -1,5 +1,5 @@
 {
-  "name": "action-deploy-delegates-tyler-test",
+  "name": "action-deploy-delegates",
   "private": true,
   "version": "1.3.0",
   "description": "Aggregates delegates data in the community repo and pushes to decentralized storage",
