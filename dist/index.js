@@ -1726,6 +1726,10 @@ function checkBypass(reqUrl) {
     if (!reqUrl.hostname) {
         return false;
     }
+    const reqHost = reqUrl.hostname;
+    if (isLoopbackAddress(reqHost)) {
+        return true;
+    }
     const noProxy = process.env['no_proxy'] || process.env['NO_PROXY'] || '';
     if (!noProxy) {
         return false;
@@ -1751,14 +1755,1418 @@ function checkBypass(reqUrl) {
         .split(',')
         .map(x => x.trim().toUpperCase())
         .filter(x => x)) {
-        if (upperReqHosts.some(x => x === upperNoProxyItem)) {
+        if (upperNoProxyItem === '*' ||
+            upperReqHosts.some(x => x === upperNoProxyItem ||
+                x.endsWith(`.${upperNoProxyItem}`) ||
+                (upperNoProxyItem.startsWith('.') &&
+                    x.endsWith(`${upperNoProxyItem}`)))) {
             return true;
         }
     }
     return false;
 }
 exports.checkBypass = checkBypass;
+function isLoopbackAddress(host) {
+    const hostLower = host.toLowerCase();
+    return (hostLower === 'localhost' ||
+        hostLower.startsWith('127.') ||
+        hostLower.startsWith('[::1]') ||
+        hostLower.startsWith('[0:0:0:0:0:0:0:1]'));
+}
 //# sourceMappingURL=proxy.js.map
+
+/***/ }),
+
+/***/ 1748:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+// Runtime header offsets
+const ID_OFFSET = -8;
+const SIZE_OFFSET = -4;
+
+// Runtime ids
+const ARRAYBUFFER_ID = 0;
+const STRING_ID = 1;
+const ARRAYBUFFERVIEW_ID = 2;
+
+// Runtime type information
+const ARRAYBUFFERVIEW = 1 << 0;
+const ARRAY = 1 << 1;
+const SET = (/* unused pure expression or super */ null && (1 << 2));
+const MAP = (/* unused pure expression or super */ null && (1 << 3));
+const VAL_ALIGN_OFFSET = 5;
+const VAL_ALIGN = 1 << VAL_ALIGN_OFFSET;
+const VAL_SIGNED = 1 << 10;
+const VAL_FLOAT = 1 << 11;
+const VAL_NULLABLE = (/* unused pure expression or super */ null && (1 << 12));
+const VAL_MANAGED = 1 << 13;
+const KEY_ALIGN_OFFSET = 14;
+const KEY_ALIGN = 1 << KEY_ALIGN_OFFSET;
+const KEY_SIGNED = (/* unused pure expression or super */ null && (1 << 19));
+const KEY_FLOAT = (/* unused pure expression or super */ null && (1 << 20));
+const KEY_NULLABLE = (/* unused pure expression or super */ null && (1 << 21));
+const KEY_MANAGED = (/* unused pure expression or super */ null && (1 << 22));
+
+// Array(BufferView) layout
+const ARRAYBUFFERVIEW_BUFFER_OFFSET = 0;
+const ARRAYBUFFERVIEW_DATASTART_OFFSET = 4;
+const ARRAYBUFFERVIEW_DATALENGTH_OFFSET = 8;
+const ARRAYBUFFERVIEW_SIZE = 12;
+const ARRAY_LENGTH_OFFSET = 12;
+const ARRAY_SIZE = 16;
+
+const BIGINT = typeof BigUint64Array !== "undefined";
+const THIS = Symbol();
+const CHUNKSIZE = 1024;
+
+/** Gets a string from an U32 and an U16 view on a memory. */
+function getStringImpl(buffer, ptr) {
+  const U32 = new Uint32Array(buffer);
+  const U16 = new Uint16Array(buffer);
+  var length = U32[(ptr + SIZE_OFFSET) >>> 2] >>> 1;
+  var offset = ptr >>> 1;
+  if (length <= CHUNKSIZE) return String.fromCharCode.apply(String, U16.subarray(offset, offset + length));
+  const parts = [];
+  do {
+    const last = U16[offset + CHUNKSIZE - 1];
+    const size = last >= 0xD800 && last < 0xDC00 ? CHUNKSIZE - 1 : CHUNKSIZE;
+    parts.push(String.fromCharCode.apply(String, U16.subarray(offset, offset += size)));
+    length -= size;
+  } while (length > CHUNKSIZE);
+  return parts.join("") + String.fromCharCode.apply(String, U16.subarray(offset, offset + length));
+}
+
+/** Prepares the base module prior to instantiation. */
+function preInstantiate(imports) {
+  const baseModule = {};
+
+  function getString(memory, ptr) {
+    if (!memory) return "<yet unknown>";
+    return getStringImpl(memory.buffer, ptr);
+  }
+
+  // add common imports used by stdlib for convenience
+  const env = (imports.env = imports.env || {});
+  env.abort = env.abort || function abort(mesg, file, line, colm) {
+    const memory = baseModule.memory || env.memory; // prefer exported, otherwise try imported
+    throw Error("abort: " + getString(memory, mesg) + " at " + getString(memory, file) + ":" + line + ":" + colm);
+  }
+  env.trace = env.trace || function trace(mesg, n) {
+    const memory = baseModule.memory || env.memory;
+    console.log("trace: " + getString(memory, mesg) + (n ? " " : "") + Array.prototype.slice.call(arguments, 2, 2 + n).join(", "));
+  }
+  imports.Math = imports.Math || Math;
+  imports.Date = imports.Date || Date;
+
+  return baseModule;
+}
+
+/** Prepares the final module once instantiation is complete. */
+function postInstantiate(baseModule, instance) {
+  const rawExports = instance.exports;
+  const memory = rawExports.memory;
+  const table = rawExports.table;
+  const alloc = rawExports["__alloc"];
+  const retain = rawExports["__retain"];
+  const rttiBase = rawExports["__rtti_base"] || ~0; // oob if not present
+
+  /** Gets the runtime type info for the given id. */
+  function getInfo(id) {
+    const U32 = new Uint32Array(memory.buffer);
+    const count = U32[rttiBase >>> 2];
+    if ((id >>>= 0) >= count) throw Error("invalid id: " + id);
+    return U32[(rttiBase + 4 >>> 2) + id * 2];
+  }
+
+  /** Gets the runtime base id for the given id. */
+  function getBase(id) {
+    const U32 = new Uint32Array(memory.buffer);
+    const count = U32[rttiBase >>> 2];
+    if ((id >>>= 0) >= count) throw Error("invalid id: " + id);
+    return U32[(rttiBase + 4 >>> 2) + id * 2 + 1];
+  }
+
+  /** Gets the runtime alignment of a collection's values. */
+  function getValueAlign(info) {
+    return 31 - Math.clz32((info >>> VAL_ALIGN_OFFSET) & 31); // -1 if none
+  }
+
+  /** Gets the runtime alignment of a collection's keys. */
+  function getKeyAlign(info) {
+    return 31 - Math.clz32((info >>> KEY_ALIGN_OFFSET) & 31); // -1 if none
+  }
+
+  /** Allocates a new string in the module's memory and returns its retained pointer. */
+  function __allocString(str) {
+    const length = str.length;
+    const ptr = alloc(length << 1, STRING_ID);
+    const U16 = new Uint16Array(memory.buffer);
+    for (var i = 0, p = ptr >>> 1; i < length; ++i) U16[p + i] = str.charCodeAt(i);
+    return ptr;
+  }
+
+  baseModule.__allocString = __allocString;
+
+  /** Reads a string from the module's memory by its pointer. */
+  function __getString(ptr) {
+    const buffer = memory.buffer;
+    const id = new Uint32Array(buffer)[ptr + ID_OFFSET >>> 2];
+    if (id !== STRING_ID) throw Error("not a string: " + ptr);
+    return getStringImpl(buffer, ptr);
+  }
+
+  baseModule.__getString = __getString;
+
+  /** Gets the view matching the specified alignment, signedness and floatness. */
+  function getView(alignLog2, signed, float) {
+    const buffer = memory.buffer;
+    if (float) {
+      switch (alignLog2) {
+        case 2: return new Float32Array(buffer);
+        case 3: return new Float64Array(buffer);
+      }
+    } else {
+      switch (alignLog2) {
+        case 0: return new (signed ? Int8Array : Uint8Array)(buffer);
+        case 1: return new (signed ? Int16Array : Uint16Array)(buffer);
+        case 2: return new (signed ? Int32Array : Uint32Array)(buffer);
+        case 3: return new (signed ? BigInt64Array : BigUint64Array)(buffer);
+      }
+    }
+    throw Error("unsupported align: " + alignLog2);
+  }
+
+  /** Allocates a new array in the module's memory and returns its retained pointer. */
+  function __allocArray(id, values) {
+    const info = getInfo(id);
+    if (!(info & (ARRAYBUFFERVIEW | ARRAY))) throw Error("not an array: " + id + " @ " + info);
+    const align = getValueAlign(info);
+    const length = values.length;
+    const buf = alloc(length << align, ARRAYBUFFER_ID);
+    const arr = alloc(info & ARRAY ? ARRAY_SIZE : ARRAYBUFFERVIEW_SIZE, id);
+    const U32 = new Uint32Array(memory.buffer);
+    U32[arr + ARRAYBUFFERVIEW_BUFFER_OFFSET >>> 2] = retain(buf);
+    U32[arr + ARRAYBUFFERVIEW_DATASTART_OFFSET >>> 2] = buf;
+    U32[arr + ARRAYBUFFERVIEW_DATALENGTH_OFFSET >>> 2] = length << align;
+    if (info & ARRAY) U32[arr + ARRAY_LENGTH_OFFSET >>> 2] = length;
+    const view = getView(align, info & VAL_SIGNED, info & VAL_FLOAT);
+    if (info & VAL_MANAGED) {
+      for (let i = 0; i < length; ++i) view[(buf >>> align) + i] = retain(values[i]);
+    } else {
+      view.set(values, buf >>> align);
+    }
+    return arr;
+  }
+
+  baseModule.__allocArray = __allocArray;
+
+  /** Gets a live view on an array's values in the module's memory. Infers the array type from RTTI. */
+  function __getArrayView(arr) {
+    const U32 = new Uint32Array(memory.buffer);
+    const id = U32[arr + ID_OFFSET >>> 2];
+    const info = getInfo(id);
+    if (!(info & ARRAYBUFFERVIEW)) throw Error("not an array: " + id);
+    const align = getValueAlign(info);
+    var buf = U32[arr + ARRAYBUFFERVIEW_DATASTART_OFFSET >>> 2];
+    const length = info & ARRAY
+      ? U32[arr + ARRAY_LENGTH_OFFSET >>> 2]
+      : U32[buf + SIZE_OFFSET >>> 2] >>> align;
+    return getView(align, info & VAL_SIGNED, info & VAL_FLOAT)
+          .subarray(buf >>>= align, buf + length);
+  }
+
+  baseModule.__getArrayView = __getArrayView;
+
+  /** Copies an array's values from the module's memory. Infers the array type from RTTI. */
+  function __getArray(arr) {
+    const input = __getArrayView(arr);
+    const len = input.length;
+    const out = new Array(len);
+    for (let i = 0; i < len; i++) out[i] = input[i];
+    return out;
+  }
+
+  baseModule.__getArray = __getArray;
+
+  /** Copies an ArrayBuffer's value from the module's memory. */
+  function __getArrayBuffer(ptr) {
+    const buffer = memory.buffer;
+    const length = new Uint32Array(buffer)[ptr + SIZE_OFFSET >>> 2];
+    return buffer.slice(ptr, ptr + length);
+  }
+
+  baseModule.__getArrayBuffer = __getArrayBuffer;
+
+  /** Copies a typed array's values from the module's memory. */
+  function getTypedArray(Type, alignLog2, ptr) {
+    return new Type(getTypedArrayView(Type, alignLog2, ptr));
+  }
+
+  /** Gets a live view on a typed array's values in the module's memory. */
+  function getTypedArrayView(Type, alignLog2, ptr) {
+    const buffer = memory.buffer;
+    const U32 = new Uint32Array(buffer);
+    const bufPtr = U32[ptr + ARRAYBUFFERVIEW_DATASTART_OFFSET >>> 2];
+    return new Type(buffer, bufPtr, U32[bufPtr + SIZE_OFFSET >>> 2] >>> alignLog2);
+  }
+
+  baseModule.__getInt8Array = getTypedArray.bind(null, Int8Array, 0);
+  baseModule.__getInt8ArrayView = getTypedArrayView.bind(null, Int8Array, 0);
+  baseModule.__getUint8Array = getTypedArray.bind(null, Uint8Array, 0);
+  baseModule.__getUint8ArrayView = getTypedArrayView.bind(null, Uint8Array, 0);
+  baseModule.__getUint8ClampedArray = getTypedArray.bind(null, Uint8ClampedArray, 0);
+  baseModule.__getUint8ClampedArrayView = getTypedArrayView.bind(null, Uint8ClampedArray, 0);
+  baseModule.__getInt16Array = getTypedArray.bind(null, Int16Array, 1);
+  baseModule.__getInt16ArrayView = getTypedArrayView.bind(null, Int16Array, 1);
+  baseModule.__getUint16Array = getTypedArray.bind(null, Uint16Array, 1);
+  baseModule.__getUint16ArrayView = getTypedArrayView.bind(null, Uint16Array, 1);
+  baseModule.__getInt32Array = getTypedArray.bind(null, Int32Array, 2);
+  baseModule.__getInt32ArrayView = getTypedArrayView.bind(null, Int32Array, 2);
+  baseModule.__getUint32Array = getTypedArray.bind(null, Uint32Array, 2);
+  baseModule.__getUint32ArrayView = getTypedArrayView.bind(null, Uint32Array, 2);
+  if (BIGINT) {
+    baseModule.__getInt64Array = getTypedArray.bind(null, BigInt64Array, 3);
+    baseModule.__getInt64ArrayView = getTypedArrayView.bind(null, BigInt64Array, 3);
+    baseModule.__getUint64Array = getTypedArray.bind(null, BigUint64Array, 3);
+    baseModule.__getUint64ArrayView = getTypedArrayView.bind(null, BigUint64Array, 3);
+  }
+  baseModule.__getFloat32Array = getTypedArray.bind(null, Float32Array, 2);
+  baseModule.__getFloat32ArrayView = getTypedArrayView.bind(null, Float32Array, 2);
+  baseModule.__getFloat64Array = getTypedArray.bind(null, Float64Array, 3);
+  baseModule.__getFloat64ArrayView = getTypedArrayView.bind(null, Float64Array, 3);
+
+  /** Tests whether an object is an instance of the class represented by the specified base id. */
+  function __instanceof(ptr, baseId) {
+    const U32 = new Uint32Array(memory.buffer);
+    var id = U32[(ptr + ID_OFFSET) >>> 2];
+    if (id <= U32[rttiBase >>> 2]) {
+      do if (id == baseId) return true;
+      while (id = getBase(id));
+    }
+    return false;
+  }
+
+  baseModule.__instanceof = __instanceof;
+
+  // Pull basic exports to baseModule so code in preInstantiate can use them
+  baseModule.memory = baseModule.memory || memory;
+  baseModule.table  = baseModule.table  || table;
+
+  // Demangle exports and provide the usual utility on the prototype
+  return demangle(rawExports, baseModule);
+}
+
+function isResponse(o) {
+  return typeof Response !== "undefined" && o instanceof Response;
+}
+
+/** Asynchronously instantiates an AssemblyScript module from anything that can be instantiated. */
+async function instantiate(source, imports) {
+  if (isResponse(source = await source)) return instantiateStreaming(source, imports);
+  return postInstantiate(
+    preInstantiate(imports || (imports = {})),
+    await WebAssembly.instantiate(
+      source instanceof WebAssembly.Module
+        ? source
+        : await WebAssembly.compile(source),
+      imports
+    )
+  );
+}
+
+exports.instantiate = instantiate;
+
+/** Synchronously instantiates an AssemblyScript module from a WebAssembly.Module or binary buffer. */
+function instantiateSync(source, imports) {
+  return postInstantiate(
+    preInstantiate(imports || (imports = {})),
+    new WebAssembly.Instance(
+      source instanceof WebAssembly.Module
+        ? source
+        : new WebAssembly.Module(source),
+      imports
+    )
+  )
+}
+
+exports.instantiateSync = instantiateSync;
+
+/** Asynchronously instantiates an AssemblyScript module from a response, i.e. as obtained by `fetch`. */
+async function instantiateStreaming(source, imports) {
+  if (!WebAssembly.instantiateStreaming) {
+    return instantiate(
+      isResponse(source = await source)
+        ? source.arrayBuffer()
+        : source,
+      imports
+    );
+  }
+  return postInstantiate(
+    preInstantiate(imports || (imports = {})),
+    (await WebAssembly.instantiateStreaming(source, imports)).instance
+  );
+}
+
+exports.instantiateStreaming = instantiateStreaming;
+
+/** Demangles an AssemblyScript module's exports to a friendly object structure. */
+function demangle(exports, baseModule) {
+  var module = baseModule ? Object.create(baseModule) : {};
+  var setArgumentsLength = exports["__argumentsLength"]
+    ? function(length) { exports["__argumentsLength"].value = length; }
+    : exports["__setArgumentsLength"] || exports["__setargc"] || function() {};
+  for (let internalName in exports) {
+    if (!Object.prototype.hasOwnProperty.call(exports, internalName)) continue;
+    const elem = exports[internalName];
+    let parts = internalName.split(".");
+    let curr = module;
+    while (parts.length > 1) {
+      let part = parts.shift();
+      if (!Object.prototype.hasOwnProperty.call(curr, part)) curr[part] = {};
+      curr = curr[part];
+    }
+    let name = parts[0];
+    let hash = name.indexOf("#");
+    if (hash >= 0) {
+      let className = name.substring(0, hash);
+      let classElem = curr[className];
+      if (typeof classElem === "undefined" || !classElem.prototype) {
+        let ctor = function(...args) {
+          return ctor.wrap(ctor.prototype.constructor(0, ...args));
+        };
+        ctor.prototype = {
+          valueOf: function valueOf() {
+            return this[THIS];
+          }
+        };
+        ctor.wrap = function(thisValue) {
+          return Object.create(ctor.prototype, { [THIS]: { value: thisValue, writable: false } });
+        };
+        if (classElem) Object.getOwnPropertyNames(classElem).forEach(name =>
+          Object.defineProperty(ctor, name, Object.getOwnPropertyDescriptor(classElem, name))
+        );
+        curr[className] = ctor;
+      }
+      name = name.substring(hash + 1);
+      curr = curr[className].prototype;
+      if (/^(get|set):/.test(name)) {
+        if (!Object.prototype.hasOwnProperty.call(curr, name = name.substring(4))) {
+          let getter = exports[internalName.replace("set:", "get:")];
+          let setter = exports[internalName.replace("get:", "set:")];
+          Object.defineProperty(curr, name, {
+            get: function() { return getter(this[THIS]); },
+            set: function(value) { setter(this[THIS], value); },
+            enumerable: true
+          });
+        }
+      } else {
+        if (name === 'constructor') {
+          (curr[name] = (...args) => {
+            setArgumentsLength(args.length);
+            return elem(...args);
+          }).original = elem;
+        } else { // instance method
+          (curr[name] = function(...args) { // !
+            setArgumentsLength(args.length);
+            return elem(this[THIS], ...args);
+          }).original = elem;
+        }
+      }
+    } else {
+      if (/^(get|set):/.test(name)) {
+        if (!Object.prototype.hasOwnProperty.call(curr, name = name.substring(4))) {
+          Object.defineProperty(curr, name, {
+            get: exports[internalName.replace("set:", "get:")],
+            set: exports[internalName.replace("get:", "set:")],
+            enumerable: true
+          });
+        }
+      } else if (typeof elem === "function" && elem !== setArgumentsLength) {
+        (curr[name] = (...args) => {
+          setArgumentsLength(args.length);
+          return elem(...args);
+        }).original = elem;
+      } else {
+        curr[name] = elem;
+      }
+    }
+  }
+  return module;
+}
+
+exports.demangle = demangle;
+
+
+/***/ }),
+
+/***/ 2805:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var reader = __nccwpck_require__(7677);
+var indexer = __nccwpck_require__(3038);
+var iterator = __nccwpck_require__(8229);
+var writer = __nccwpck_require__(9478);
+var indexedReader = __nccwpck_require__(4378);
+
+
+
+exports.CarReader = reader.CarReader;
+exports.CarIndexer = indexer.CarIndexer;
+exports.CarBlockIterator = iterator.CarBlockIterator;
+exports.CarCIDIterator = iterator.CarCIDIterator;
+exports.CarWriter = writer.CarWriter;
+exports.CarIndexedReader = indexedReader.CarIndexedReader;
+
+
+/***/ }),
+
+/***/ 7490:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var varint = __nccwpck_require__(8018);
+var cid = __nccwpck_require__(6447);
+var Digest = __nccwpck_require__(76);
+var dagCbor = __nccwpck_require__(6477);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
+var Digest__namespace = /*#__PURE__*/_interopNamespace(Digest);
+
+const CIDV0_BYTES = {
+  SHA2_256: 18,
+  LENGTH: 32,
+  DAG_PB: 112
+};
+async function readVarint(reader) {
+  const bytes = await reader.upTo(8);
+  const i = varint__default["default"].decode(bytes);
+  reader.seek(varint__default["default"].decode.bytes);
+  return i;
+}
+async function readHeader(reader) {
+  const length = await readVarint(reader);
+  if (length === 0) {
+    throw new Error('Invalid CAR header (zero length)');
+  }
+  const header = await reader.exactly(length);
+  reader.seek(length);
+  const block = dagCbor.decode(header);
+  if (block == null || Array.isArray(block) || typeof block !== 'object') {
+    throw new Error('Invalid CAR header format');
+  }
+  if (block.version !== 1) {
+    if (typeof block.version === 'string') {
+      throw new Error(`Invalid CAR version: "${ block.version }"`);
+    }
+    throw new Error(`Invalid CAR version: ${ block.version }`);
+  }
+  if (!Array.isArray(block.roots)) {
+    throw new Error('Invalid CAR header format');
+  }
+  if (Object.keys(block).filter(p => p !== 'roots' && p !== 'version').length) {
+    throw new Error('Invalid CAR header format');
+  }
+  return block;
+}
+async function readMultihash(reader) {
+  const bytes = await reader.upTo(8);
+  varint__default["default"].decode(bytes);
+  const codeLength = varint__default["default"].decode.bytes;
+  const length = varint__default["default"].decode(bytes.subarray(varint__default["default"].decode.bytes));
+  const lengthLength = varint__default["default"].decode.bytes;
+  const mhLength = codeLength + lengthLength + length;
+  const multihash = await reader.exactly(mhLength);
+  reader.seek(mhLength);
+  return multihash;
+}
+async function readCid(reader) {
+  const first = await reader.exactly(2);
+  if (first[0] === CIDV0_BYTES.SHA2_256 && first[1] === CIDV0_BYTES.LENGTH) {
+    const bytes = await reader.exactly(34);
+    reader.seek(34);
+    const multihash = Digest__namespace.decode(bytes);
+    return cid.CID.create(0, CIDV0_BYTES.DAG_PB, multihash);
+  }
+  const version = await readVarint(reader);
+  if (version !== 1) {
+    throw new Error(`Unexpected CID version (${ version })`);
+  }
+  const codec = await readVarint(reader);
+  const bytes = await readMultihash(reader);
+  const multihash = Digest__namespace.decode(bytes);
+  return cid.CID.create(version, codec, multihash);
+}
+async function readBlockHead(reader) {
+  const start = reader.pos;
+  let length = await readVarint(reader);
+  if (length === 0) {
+    throw new Error('Invalid CAR section (zero length)');
+  }
+  length += reader.pos - start;
+  const cid = await readCid(reader);
+  const blockLength = length - (reader.pos - start);
+  return {
+    cid,
+    length,
+    blockLength
+  };
+}
+async function readBlock(reader) {
+  const {cid, blockLength} = await readBlockHead(reader);
+  const bytes = await reader.exactly(blockLength);
+  reader.seek(blockLength);
+  return {
+    bytes,
+    cid
+  };
+}
+async function readBlockIndex(reader) {
+  const offset = reader.pos;
+  const {cid, length, blockLength} = await readBlockHead(reader);
+  const index = {
+    cid,
+    length,
+    blockLength,
+    offset,
+    blockOffset: reader.pos
+  };
+  reader.seek(index.blockLength);
+  return index;
+}
+function createDecoder(reader) {
+  const headerPromise = readHeader(reader);
+  return {
+    header: () => headerPromise,
+    async *blocks() {
+      await headerPromise;
+      while ((await reader.upTo(8)).length > 0) {
+        yield await readBlock(reader);
+      }
+    },
+    async *blocksIndex() {
+      await headerPromise;
+      while ((await reader.upTo(8)).length > 0) {
+        yield await readBlockIndex(reader);
+      }
+    }
+  };
+}
+function bytesReader(bytes) {
+  let pos = 0;
+  return {
+    async upTo(length) {
+      return bytes.subarray(pos, pos + Math.min(length, bytes.length - pos));
+    },
+    async exactly(length) {
+      if (length > bytes.length - pos) {
+        throw new Error('Unexpected end of data');
+      }
+      return bytes.subarray(pos, pos + length);
+    },
+    seek(length) {
+      pos += length;
+    },
+    get pos() {
+      return pos;
+    }
+  };
+}
+function chunkReader(readChunk) {
+  let pos = 0;
+  let have = 0;
+  let offset = 0;
+  let currentChunk = new Uint8Array(0);
+  const read = async length => {
+    have = currentChunk.length - offset;
+    const bufa = [currentChunk.subarray(offset)];
+    while (have < length) {
+      const chunk = await readChunk();
+      if (chunk == null) {
+        break;
+      }
+      if (have < 0) {
+        if (chunk.length > have) {
+          bufa.push(chunk.subarray(-have));
+        }
+      } else {
+        bufa.push(chunk);
+      }
+      have += chunk.length;
+    }
+    currentChunk = new Uint8Array(bufa.reduce((p, c) => p + c.length, 0));
+    let off = 0;
+    for (const b of bufa) {
+      currentChunk.set(b, off);
+      off += b.length;
+    }
+    offset = 0;
+  };
+  return {
+    async upTo(length) {
+      if (currentChunk.length - offset < length) {
+        await read(length);
+      }
+      return currentChunk.subarray(offset, offset + Math.min(currentChunk.length - offset, length));
+    },
+    async exactly(length) {
+      if (currentChunk.length - offset < length) {
+        await read(length);
+      }
+      if (currentChunk.length - offset < length) {
+        throw new Error('Unexpected end of data');
+      }
+      return currentChunk.subarray(offset, offset + length);
+    },
+    seek(length) {
+      pos += length;
+      offset += length;
+    },
+    get pos() {
+      return pos;
+    }
+  };
+}
+function asyncIterableReader(asyncIterable) {
+  const iterator = asyncIterable[Symbol.asyncIterator]();
+  async function readChunk() {
+    const next = await iterator.next();
+    if (next.done) {
+      return null;
+    }
+    return next.value;
+  }
+  return chunkReader(readChunk);
+}
+
+exports.asyncIterableReader = asyncIterableReader;
+exports.bytesReader = bytesReader;
+exports.chunkReader = chunkReader;
+exports.createDecoder = createDecoder;
+exports.readBlockHead = readBlockHead;
+exports.readHeader = readHeader;
+
+
+/***/ }),
+
+/***/ 9464:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var varint = __nccwpck_require__(8018);
+var dagCbor = __nccwpck_require__(6477);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
+
+function createHeader(roots) {
+  const headerBytes = dagCbor.encode({
+    version: 1,
+    roots
+  });
+  const varintBytes = varint__default["default"].encode(headerBytes.length);
+  const header = new Uint8Array(varintBytes.length + headerBytes.length);
+  header.set(varintBytes, 0);
+  header.set(headerBytes, varintBytes.length);
+  return header;
+}
+function createEncoder(writer) {
+  return {
+    async setRoots(roots) {
+      const bytes = createHeader(roots);
+      await writer.write(bytes);
+    },
+    async writeBlock(block) {
+      const {cid, bytes} = block;
+      await writer.write(new Uint8Array(varint__default["default"].encode(cid.bytes.length + bytes.length)));
+      await writer.write(cid.bytes);
+      if (bytes.length) {
+        await writer.write(bytes);
+      }
+    },
+    async close() {
+      return writer.end();
+    }
+  };
+}
+
+exports.createEncoder = createEncoder;
+exports.createHeader = createHeader;
+
+
+/***/ }),
+
+/***/ 4378:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var fs = __nccwpck_require__(7147);
+var stream = __nccwpck_require__(2781);
+var cid = __nccwpck_require__(6447);
+var indexer = __nccwpck_require__(3038);
+var reader = __nccwpck_require__(7677);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
+
+class CarIndexedReader {
+  constructor(version, path, roots, index, order) {
+    this._version = version;
+    this._path = path;
+    this._roots = roots;
+    this._index = index;
+    this._order = order;
+    this._fd = null;
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+  async has(key) {
+    return this._index.has(key.toString());
+  }
+  async get(key) {
+    const blockIndex = this._index.get(key.toString());
+    if (!blockIndex) {
+      return undefined;
+    }
+    if (!this._fd) {
+      this._fd = await fs__default["default"].promises.open(this._path, 'r');
+    }
+    const readIndex = {
+      cid: key,
+      length: 0,
+      offset: 0,
+      blockLength: blockIndex.blockLength,
+      blockOffset: blockIndex.blockOffset
+    };
+    return reader.CarReader.readRaw(this._fd, readIndex);
+  }
+  async *blocks() {
+    for (const cidStr of this._order) {
+      const block = await this.get(cid.CID.parse(cidStr));
+      if (!block) {
+        throw new Error('Unexpected internal error');
+      }
+      yield block;
+    }
+  }
+  async *cids() {
+    for (const cidStr of this._order) {
+      yield cid.CID.parse(cidStr);
+    }
+  }
+  async close() {
+    if (this._fd) {
+      return this._fd.close();
+    }
+  }
+  static async fromFile(path) {
+    if (typeof path !== 'string') {
+      throw new TypeError('fromFile() requires a file path string');
+    }
+    const iterable = await indexer.CarIndexer.fromIterable(stream.Readable.from(fs__default["default"].createReadStream(path)));
+    const index = new Map();
+    const order = [];
+    for await (const {cid, blockLength, blockOffset} of iterable) {
+      const cidStr = cid.toString();
+      index.set(cidStr, {
+        blockLength,
+        blockOffset
+      });
+      order.push(cidStr);
+    }
+    return new CarIndexedReader(iterable.version, path, await iterable.getRoots(), index, order);
+  }
+}
+const __browser = false;
+
+exports.CarIndexedReader = CarIndexedReader;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 3038:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var decoder = __nccwpck_require__(7490);
+
+class CarIndexer {
+  constructor(version, roots, iterator) {
+    this._version = version;
+    this._roots = roots;
+    this._iterator = iterator;
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+  [Symbol.asyncIterator]() {
+    return this._iterator;
+  }
+  static async fromBytes(bytes) {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError('fromBytes() requires a Uint8Array');
+    }
+    return decodeIndexerComplete(decoder.bytesReader(bytes));
+  }
+  static async fromIterable(asyncIterable) {
+    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
+      throw new TypeError('fromIterable() requires an async iterable');
+    }
+    return decodeIndexerComplete(decoder.asyncIterableReader(asyncIterable));
+  }
+}
+async function decodeIndexerComplete(reader) {
+  const decoder$1 = decoder.createDecoder(reader);
+  const {version, roots} = await decoder$1.header();
+  return new CarIndexer(version, roots, decoder$1.blocksIndex());
+}
+
+exports.CarIndexer = CarIndexer;
+
+
+/***/ }),
+
+/***/ 1330:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+function noop() {
+}
+function create() {
+  const chunkQueue = [];
+  let drainer = null;
+  let drainerResolver = noop;
+  let ended = false;
+  let outWait = null;
+  let outWaitResolver = noop;
+  const makeDrainer = () => {
+    if (!drainer) {
+      drainer = new Promise(resolve => {
+        drainerResolver = () => {
+          drainer = null;
+          drainerResolver = noop;
+          resolve();
+        };
+      });
+    }
+    return drainer;
+  };
+  const writer = {
+    write(chunk) {
+      chunkQueue.push(chunk);
+      const drainer = makeDrainer();
+      outWaitResolver();
+      return drainer;
+    },
+    async end() {
+      ended = true;
+      const drainer = makeDrainer();
+      outWaitResolver();
+      return drainer;
+    }
+  };
+  const iterator = {
+    async next() {
+      const chunk = chunkQueue.shift();
+      if (chunk) {
+        if (chunkQueue.length === 0) {
+          drainerResolver();
+        }
+        return {
+          done: false,
+          value: chunk
+        };
+      }
+      if (ended) {
+        drainerResolver();
+        return {
+          done: true,
+          value: undefined
+        };
+      }
+      if (!outWait) {
+        outWait = new Promise(resolve => {
+          outWaitResolver = () => {
+            outWait = null;
+            outWaitResolver = noop;
+            return resolve(iterator.next());
+          };
+        });
+      }
+      return outWait;
+    }
+  };
+  return {
+    writer,
+    iterator
+  };
+}
+
+exports.create = create;
+
+
+/***/ }),
+
+/***/ 8229:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var decoder = __nccwpck_require__(7490);
+
+class CarIteratorBase {
+  constructor(version, roots, iterable) {
+    this._version = version;
+    this._roots = roots;
+    this._iterable = iterable;
+    this._decoded = false;
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+}
+class CarBlockIterator extends CarIteratorBase {
+  [Symbol.asyncIterator]() {
+    if (this._decoded) {
+      throw new Error('Cannot decode more than once');
+    }
+    if (!this._iterable) {
+      throw new Error('Block iterable not found');
+    }
+    this._decoded = true;
+    return this._iterable[Symbol.asyncIterator]();
+  }
+  static async fromBytes(bytes) {
+    const {version, roots, iterator} = await fromBytes(bytes);
+    return new CarBlockIterator(version, roots, iterator);
+  }
+  static async fromIterable(asyncIterable) {
+    const {version, roots, iterator} = await fromIterable(asyncIterable);
+    return new CarBlockIterator(version, roots, iterator);
+  }
+}
+class CarCIDIterator extends CarIteratorBase {
+  [Symbol.asyncIterator]() {
+    if (this._decoded) {
+      throw new Error('Cannot decode more than once');
+    }
+    if (!this._iterable) {
+      throw new Error('Block iterable not found');
+    }
+    this._decoded = true;
+    const iterable = this._iterable[Symbol.asyncIterator]();
+    return {
+      async next() {
+        const next = await iterable.next();
+        if (next.done) {
+          return next;
+        }
+        return {
+          done: false,
+          value: next.value.cid
+        };
+      }
+    };
+  }
+  static async fromBytes(bytes) {
+    const {version, roots, iterator} = await fromBytes(bytes);
+    return new CarCIDIterator(version, roots, iterator);
+  }
+  static async fromIterable(asyncIterable) {
+    const {version, roots, iterator} = await fromIterable(asyncIterable);
+    return new CarCIDIterator(version, roots, iterator);
+  }
+}
+async function fromBytes(bytes) {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new TypeError('fromBytes() requires a Uint8Array');
+  }
+  return decodeIterator(decoder.bytesReader(bytes));
+}
+async function fromIterable(asyncIterable) {
+  if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
+    throw new TypeError('fromIterable() requires an async iterable');
+  }
+  return decodeIterator(decoder.asyncIterableReader(asyncIterable));
+}
+async function decodeIterator(reader) {
+  const decoder$1 = decoder.createDecoder(reader);
+  const {version, roots} = await decoder$1.header();
+  return {
+    version,
+    roots,
+    iterator: decoder$1.blocks()
+  };
+}
+
+exports.CarBlockIterator = CarBlockIterator;
+exports.CarCIDIterator = CarCIDIterator;
+exports.CarIteratorBase = CarIteratorBase;
+
+
+/***/ }),
+
+/***/ 1599:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var decoder = __nccwpck_require__(7490);
+
+class CarReader {
+  constructor(version, roots, blocks) {
+    this._version = version;
+    this._roots = roots;
+    this._blocks = blocks;
+    this._keys = blocks.map(b => b.cid.toString());
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+  async has(key) {
+    return this._keys.indexOf(key.toString()) > -1;
+  }
+  async get(key) {
+    const index = this._keys.indexOf(key.toString());
+    return index > -1 ? this._blocks[index] : undefined;
+  }
+  async *blocks() {
+    for (const block of this._blocks) {
+      yield block;
+    }
+  }
+  async *cids() {
+    for (const block of this._blocks) {
+      yield block.cid;
+    }
+  }
+  static async fromBytes(bytes) {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError('fromBytes() requires a Uint8Array');
+    }
+    return decodeReaderComplete(decoder.bytesReader(bytes));
+  }
+  static async fromIterable(asyncIterable) {
+    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
+      throw new TypeError('fromIterable() requires an async iterable');
+    }
+    return decodeReaderComplete(decoder.asyncIterableReader(asyncIterable));
+  }
+}
+async function decodeReaderComplete(reader) {
+  const decoder$1 = decoder.createDecoder(reader);
+  const {version, roots} = await decoder$1.header();
+  const blocks = [];
+  for await (const block of decoder$1.blocks()) {
+    blocks.push(block);
+  }
+  return new CarReader(version, roots, blocks);
+}
+const __browser = true;
+
+exports.CarReader = CarReader;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 7677:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var fs = __nccwpck_require__(7147);
+var util = __nccwpck_require__(3837);
+var readerBrowser = __nccwpck_require__(1599);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
+
+const fsread = util.promisify(fs__default["default"].read);
+class CarReader extends readerBrowser.CarReader {
+  static async readRaw(fd, blockIndex) {
+    const {cid, blockLength, blockOffset} = blockIndex;
+    const bytes = new Uint8Array(blockLength);
+    let read;
+    if (typeof fd === 'number') {
+      read = (await fsread(fd, bytes, 0, blockLength, blockOffset)).bytesRead;
+    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
+      read = (await fd.read(bytes, 0, blockLength, blockOffset)).bytesRead;
+    } else {
+      throw new TypeError('Bad fd');
+    }
+    if (read !== blockLength) {
+      throw new Error(`Failed to read entire block (${ read } instead of ${ blockLength })`);
+    }
+    return {
+      cid,
+      bytes
+    };
+  }
+}
+const __browser = false;
+
+exports.CarReader = CarReader;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 5479:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var cid = __nccwpck_require__(6447);
+var encoder = __nccwpck_require__(9464);
+var iteratorChannel = __nccwpck_require__(1330);
+var decoder = __nccwpck_require__(7490);
+
+class CarWriter {
+  constructor(roots, encoder) {
+    this._encoder = encoder;
+    this._mutex = encoder.setRoots(roots);
+    this._ended = false;
+  }
+  async put(block) {
+    if (!(block.bytes instanceof Uint8Array) || !block.cid) {
+      throw new TypeError('Can only write {cid, bytes} objects');
+    }
+    if (this._ended) {
+      throw new Error('Already closed');
+    }
+    const cid$1 = cid.CID.asCID(block.cid);
+    if (!cid$1) {
+      throw new TypeError('Can only write {cid, bytes} objects');
+    }
+    this._mutex = this._mutex.then(() => this._encoder.writeBlock({
+      cid: cid$1,
+      bytes: block.bytes
+    }));
+    return this._mutex;
+  }
+  async close() {
+    if (this._ended) {
+      throw new Error('Already closed');
+    }
+    await this._mutex;
+    this._ended = true;
+    return this._encoder.close();
+  }
+  static create(roots) {
+    roots = toRoots(roots);
+    const {encoder, iterator} = encodeWriter();
+    const writer = new CarWriter(roots, encoder);
+    const out = new CarWriterOut(iterator);
+    return {
+      writer,
+      out
+    };
+  }
+  static createAppender() {
+    const {encoder, iterator} = encodeWriter();
+    encoder.setRoots = () => Promise.resolve();
+    const writer = new CarWriter([], encoder);
+    const out = new CarWriterOut(iterator);
+    return {
+      writer,
+      out
+    };
+  }
+  static async updateRootsInBytes(bytes, roots) {
+    const reader = decoder.bytesReader(bytes);
+    await decoder.readHeader(reader);
+    const newHeader = encoder.createHeader(roots);
+    if (reader.pos !== newHeader.length) {
+      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ reader.pos } bytes, new header is ${ newHeader.length } bytes)`);
+    }
+    bytes.set(newHeader, 0);
+    return bytes;
+  }
+}
+class CarWriterOut {
+  constructor(iterator) {
+    this._iterator = iterator;
+  }
+  [Symbol.asyncIterator]() {
+    if (this._iterating) {
+      throw new Error('Multiple iterator not supported');
+    }
+    this._iterating = true;
+    return this._iterator;
+  }
+}
+function encodeWriter() {
+  const iw = iteratorChannel.create();
+  const {writer, iterator} = iw;
+  const encoder$1 = encoder.createEncoder(writer);
+  return {
+    encoder: encoder$1,
+    iterator
+  };
+}
+function toRoots(roots) {
+  if (roots === undefined) {
+    return [];
+  }
+  if (!Array.isArray(roots)) {
+    const cid$1 = cid.CID.asCID(roots);
+    if (!cid$1) {
+      throw new TypeError('roots must be a single CID or an array of CIDs');
+    }
+    return [cid$1];
+  }
+  const _roots = [];
+  for (const root of roots) {
+    const _root = cid.CID.asCID(root);
+    if (!_root) {
+      throw new TypeError('roots must be a single CID or an array of CIDs');
+    }
+    _roots.push(_root);
+  }
+  return _roots;
+}
+const __browser = true;
+
+exports.CarWriter = CarWriter;
+exports.CarWriterOut = CarWriterOut;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 9478:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var fs = __nccwpck_require__(7147);
+var util = __nccwpck_require__(3837);
+var writerBrowser = __nccwpck_require__(5479);
+var decoder = __nccwpck_require__(7490);
+var encoder = __nccwpck_require__(9464);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
+
+const fsread = util.promisify(fs__default["default"].read);
+const fswrite = util.promisify(fs__default["default"].write);
+class CarWriter extends writerBrowser.CarWriter {
+  static async updateRootsInFile(fd, roots) {
+    const chunkSize = 256;
+    let bytes;
+    let offset = 0;
+    let readChunk;
+    if (typeof fd === 'number') {
+      readChunk = async () => (await fsread(fd, bytes, 0, chunkSize, offset)).bytesRead;
+    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
+      readChunk = async () => (await fd.read(bytes, 0, chunkSize, offset)).bytesRead;
+    } else {
+      throw new TypeError('Bad fd');
+    }
+    const fdReader = decoder.chunkReader(async () => {
+      bytes = new Uint8Array(chunkSize);
+      const read = await readChunk();
+      offset += read;
+      return read < chunkSize ? bytes.subarray(0, read) : bytes;
+    });
+    await decoder.readHeader(fdReader);
+    const newHeader = encoder.createHeader(roots);
+    if (fdReader.pos !== newHeader.length) {
+      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ fdReader.pos } bytes, new header is ${ newHeader.length } bytes)`);
+    }
+    if (typeof fd === 'number') {
+      await fswrite(fd, newHeader, 0, newHeader.length, 0);
+    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
+      await fd.write(newHeader, 0, newHeader.length, 0);
+    }
+  }
+}
+const __browser = false;
+
+exports.CarWriter = CarWriter;
+exports.__browser = __browser;
+
 
 /***/ }),
 
@@ -2811,6 +4219,47 @@ exports.validate = validate;
 
 /***/ }),
 
+/***/ 6063:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var hasher = __nccwpck_require__(92);
+var multiformats = __nccwpck_require__(5978);
+var mur = __nccwpck_require__(7214);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var mur__default = /*#__PURE__*/_interopDefaultLegacy(mur);
+
+function fromNumberTo32BitBuf(number) {
+  const bytes = new Array(4);
+  for (let i = 0; i < 4; i++) {
+    bytes[i] = number & 255;
+    number = number >> 8;
+  }
+  return new Uint8Array(bytes);
+}
+const murmur332 = hasher.from({
+  name: 'murmur3-32',
+  code: 35,
+  encode: input => fromNumberTo32BitBuf(mur__default["default"].x86.hash32(input))
+});
+const murmur3128 = hasher.from({
+  name: 'murmur3-128',
+  code: 34,
+  encode: input => multiformats.bytes.fromHex(mur__default["default"].x64.hash128(input))
+});
+
+exports.murmur3128 = murmur3128;
+exports.murmur332 = murmur332;
+
+
+/***/ }),
+
 /***/ 252:
 /***/ ((module) => {
 
@@ -3748,6 +5197,410 @@ function range(a, b, str) {
 
 /***/ }),
 
+/***/ 3664:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const { Buffer } = __nccwpck_require__(4300)
+const symbol = Symbol.for('BufferList')
+
+function BufferList (buf) {
+  if (!(this instanceof BufferList)) {
+    return new BufferList(buf)
+  }
+
+  BufferList._init.call(this, buf)
+}
+
+BufferList._init = function _init (buf) {
+  Object.defineProperty(this, symbol, { value: true })
+
+  this._bufs = []
+  this.length = 0
+
+  if (buf) {
+    this.append(buf)
+  }
+}
+
+BufferList.prototype._new = function _new (buf) {
+  return new BufferList(buf)
+}
+
+BufferList.prototype._offset = function _offset (offset) {
+  if (offset === 0) {
+    return [0, 0]
+  }
+
+  let tot = 0
+
+  for (let i = 0; i < this._bufs.length; i++) {
+    const _t = tot + this._bufs[i].length
+    if (offset < _t || i === this._bufs.length - 1) {
+      return [i, offset - tot]
+    }
+    tot = _t
+  }
+}
+
+BufferList.prototype._reverseOffset = function (blOffset) {
+  const bufferId = blOffset[0]
+  let offset = blOffset[1]
+
+  for (let i = 0; i < bufferId; i++) {
+    offset += this._bufs[i].length
+  }
+
+  return offset
+}
+
+BufferList.prototype.get = function get (index) {
+  if (index > this.length || index < 0) {
+    return undefined
+  }
+
+  const offset = this._offset(index)
+
+  return this._bufs[offset[0]][offset[1]]
+}
+
+BufferList.prototype.slice = function slice (start, end) {
+  if (typeof start === 'number' && start < 0) {
+    start += this.length
+  }
+
+  if (typeof end === 'number' && end < 0) {
+    end += this.length
+  }
+
+  return this.copy(null, 0, start, end)
+}
+
+BufferList.prototype.copy = function copy (dst, dstStart, srcStart, srcEnd) {
+  if (typeof srcStart !== 'number' || srcStart < 0) {
+    srcStart = 0
+  }
+
+  if (typeof srcEnd !== 'number' || srcEnd > this.length) {
+    srcEnd = this.length
+  }
+
+  if (srcStart >= this.length) {
+    return dst || Buffer.alloc(0)
+  }
+
+  if (srcEnd <= 0) {
+    return dst || Buffer.alloc(0)
+  }
+
+  const copy = !!dst
+  const off = this._offset(srcStart)
+  const len = srcEnd - srcStart
+  let bytes = len
+  let bufoff = (copy && dstStart) || 0
+  let start = off[1]
+
+  // copy/slice everything
+  if (srcStart === 0 && srcEnd === this.length) {
+    if (!copy) {
+      // slice, but full concat if multiple buffers
+      return this._bufs.length === 1
+        ? this._bufs[0]
+        : Buffer.concat(this._bufs, this.length)
+    }
+
+    // copy, need to copy individual buffers
+    for (let i = 0; i < this._bufs.length; i++) {
+      this._bufs[i].copy(dst, bufoff)
+      bufoff += this._bufs[i].length
+    }
+
+    return dst
+  }
+
+  // easy, cheap case where it's a subset of one of the buffers
+  if (bytes <= this._bufs[off[0]].length - start) {
+    return copy
+      ? this._bufs[off[0]].copy(dst, dstStart, start, start + bytes)
+      : this._bufs[off[0]].slice(start, start + bytes)
+  }
+
+  if (!copy) {
+    // a slice, we need something to copy in to
+    dst = Buffer.allocUnsafe(len)
+  }
+
+  for (let i = off[0]; i < this._bufs.length; i++) {
+    const l = this._bufs[i].length - start
+
+    if (bytes > l) {
+      this._bufs[i].copy(dst, bufoff, start)
+      bufoff += l
+    } else {
+      this._bufs[i].copy(dst, bufoff, start, start + bytes)
+      bufoff += l
+      break
+    }
+
+    bytes -= l
+
+    if (start) {
+      start = 0
+    }
+  }
+
+  // safeguard so that we don't return uninitialized memory
+  if (dst.length > bufoff) return dst.slice(0, bufoff)
+
+  return dst
+}
+
+BufferList.prototype.shallowSlice = function shallowSlice (start, end) {
+  start = start || 0
+  end = typeof end !== 'number' ? this.length : end
+
+  if (start < 0) {
+    start += this.length
+  }
+
+  if (end < 0) {
+    end += this.length
+  }
+
+  if (start === end) {
+    return this._new()
+  }
+
+  const startOffset = this._offset(start)
+  const endOffset = this._offset(end)
+  const buffers = this._bufs.slice(startOffset[0], endOffset[0] + 1)
+
+  if (endOffset[1] === 0) {
+    buffers.pop()
+  } else {
+    buffers[buffers.length - 1] = buffers[buffers.length - 1].slice(0, endOffset[1])
+  }
+
+  if (startOffset[1] !== 0) {
+    buffers[0] = buffers[0].slice(startOffset[1])
+  }
+
+  return this._new(buffers)
+}
+
+BufferList.prototype.toString = function toString (encoding, start, end) {
+  return this.slice(start, end).toString(encoding)
+}
+
+BufferList.prototype.consume = function consume (bytes) {
+  // first, normalize the argument, in accordance with how Buffer does it
+  bytes = Math.trunc(bytes)
+  // do nothing if not a positive number
+  if (Number.isNaN(bytes) || bytes <= 0) return this
+
+  while (this._bufs.length) {
+    if (bytes >= this._bufs[0].length) {
+      bytes -= this._bufs[0].length
+      this.length -= this._bufs[0].length
+      this._bufs.shift()
+    } else {
+      this._bufs[0] = this._bufs[0].slice(bytes)
+      this.length -= bytes
+      break
+    }
+  }
+
+  return this
+}
+
+BufferList.prototype.duplicate = function duplicate () {
+  const copy = this._new()
+
+  for (let i = 0; i < this._bufs.length; i++) {
+    copy.append(this._bufs[i])
+  }
+
+  return copy
+}
+
+BufferList.prototype.append = function append (buf) {
+  if (buf == null) {
+    return this
+  }
+
+  if (buf.buffer) {
+    // append a view of the underlying ArrayBuffer
+    this._appendBuffer(Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength))
+  } else if (Array.isArray(buf)) {
+    for (let i = 0; i < buf.length; i++) {
+      this.append(buf[i])
+    }
+  } else if (this._isBufferList(buf)) {
+    // unwrap argument into individual BufferLists
+    for (let i = 0; i < buf._bufs.length; i++) {
+      this.append(buf._bufs[i])
+    }
+  } else {
+    // coerce number arguments to strings, since Buffer(number) does
+    // uninitialized memory allocation
+    if (typeof buf === 'number') {
+      buf = buf.toString()
+    }
+
+    this._appendBuffer(Buffer.from(buf))
+  }
+
+  return this
+}
+
+BufferList.prototype._appendBuffer = function appendBuffer (buf) {
+  this._bufs.push(buf)
+  this.length += buf.length
+}
+
+BufferList.prototype.indexOf = function (search, offset, encoding) {
+  if (encoding === undefined && typeof offset === 'string') {
+    encoding = offset
+    offset = undefined
+  }
+
+  if (typeof search === 'function' || Array.isArray(search)) {
+    throw new TypeError('The "value" argument must be one of type string, Buffer, BufferList, or Uint8Array.')
+  } else if (typeof search === 'number') {
+    search = Buffer.from([search])
+  } else if (typeof search === 'string') {
+    search = Buffer.from(search, encoding)
+  } else if (this._isBufferList(search)) {
+    search = search.slice()
+  } else if (Array.isArray(search.buffer)) {
+    search = Buffer.from(search.buffer, search.byteOffset, search.byteLength)
+  } else if (!Buffer.isBuffer(search)) {
+    search = Buffer.from(search)
+  }
+
+  offset = Number(offset || 0)
+
+  if (isNaN(offset)) {
+    offset = 0
+  }
+
+  if (offset < 0) {
+    offset = this.length + offset
+  }
+
+  if (offset < 0) {
+    offset = 0
+  }
+
+  if (search.length === 0) {
+    return offset > this.length ? this.length : offset
+  }
+
+  const blOffset = this._offset(offset)
+  let blIndex = blOffset[0] // index of which internal buffer we're working on
+  let buffOffset = blOffset[1] // offset of the internal buffer we're working on
+
+  // scan over each buffer
+  for (; blIndex < this._bufs.length; blIndex++) {
+    const buff = this._bufs[blIndex]
+
+    while (buffOffset < buff.length) {
+      const availableWindow = buff.length - buffOffset
+
+      if (availableWindow >= search.length) {
+        const nativeSearchResult = buff.indexOf(search, buffOffset)
+
+        if (nativeSearchResult !== -1) {
+          return this._reverseOffset([blIndex, nativeSearchResult])
+        }
+
+        buffOffset = buff.length - search.length + 1 // end of native search window
+      } else {
+        const revOffset = this._reverseOffset([blIndex, buffOffset])
+
+        if (this._match(revOffset, search)) {
+          return revOffset
+        }
+
+        buffOffset++
+      }
+    }
+
+    buffOffset = 0
+  }
+
+  return -1
+}
+
+BufferList.prototype._match = function (offset, search) {
+  if (this.length - offset < search.length) {
+    return false
+  }
+
+  for (let searchOffset = 0; searchOffset < search.length; searchOffset++) {
+    if (this.get(offset + searchOffset) !== search[searchOffset]) {
+      return false
+    }
+  }
+  return true
+}
+
+;(function () {
+  const methods = {
+    readDoubleBE: 8,
+    readDoubleLE: 8,
+    readFloatBE: 4,
+    readFloatLE: 4,
+    readInt32BE: 4,
+    readInt32LE: 4,
+    readUInt32BE: 4,
+    readUInt32LE: 4,
+    readInt16BE: 2,
+    readInt16LE: 2,
+    readUInt16BE: 2,
+    readUInt16LE: 2,
+    readInt8: 1,
+    readUInt8: 1,
+    readIntBE: null,
+    readIntLE: null,
+    readUIntBE: null,
+    readUIntLE: null
+  }
+
+  for (const m in methods) {
+    (function (m) {
+      if (methods[m] === null) {
+        BufferList.prototype[m] = function (offset, byteLength) {
+          return this.slice(offset, offset + byteLength)[m](0, byteLength)
+        }
+      } else {
+        BufferList.prototype[m] = function (offset = 0) {
+          return this.slice(offset, offset + methods[m])[m](0)
+        }
+      }
+    }(m))
+  }
+}())
+
+// Used internally by the class and also as an indicator of this object being
+// a `BufferList`. It's not possible to use `instanceof BufferList` in a browser
+// environment because there could be multiple different copies of the
+// BufferList class and some `BufferList`s might be `BufferList`s.
+BufferList.prototype._isBufferList = function _isBufferList (b) {
+  return b instanceof BufferList || BufferList.isBufferList(b)
+}
+
+BufferList.isBufferList = function isBufferList (b) {
+  return b != null && b[symbol]
+}
+
+module.exports = BufferList
+
+
+/***/ }),
+
 /***/ 7842:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -3774,6 +5627,273 @@ function blobToIt (blob) {
 }
 
 module.exports = blobToIt
+
+
+/***/ }),
+
+/***/ 7714:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var drain = __nccwpck_require__(1798);
+var filter = __nccwpck_require__(2220);
+var take = __nccwpck_require__(2360);
+var all = __nccwpck_require__(5810);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var drain__default = /*#__PURE__*/_interopDefaultLegacy(drain);
+var filter__default = /*#__PURE__*/_interopDefaultLegacy(filter);
+var take__default = /*#__PURE__*/_interopDefaultLegacy(take);
+var all__default = /*#__PURE__*/_interopDefaultLegacy(all);
+
+const sortAll = (iterable, sorter) => {
+  return async function* () {
+    const values = await all__default["default"](iterable);
+    yield* values.sort(sorter);
+  }();
+};
+class BaseBlockstore {
+  open() {
+    return Promise.reject(new Error('.open is not implemented'));
+  }
+  close() {
+    return Promise.reject(new Error('.close is not implemented'));
+  }
+  put(key, val, options) {
+    return Promise.reject(new Error('.put is not implemented'));
+  }
+  get(key, options) {
+    return Promise.reject(new Error('.get is not implemented'));
+  }
+  has(key, options) {
+    return Promise.reject(new Error('.has is not implemented'));
+  }
+  delete(key, options) {
+    return Promise.reject(new Error('.delete is not implemented'));
+  }
+  async *putMany(source, options = {}) {
+    for await (const {key, value} of source) {
+      await this.put(key, value, options);
+      yield {
+        key,
+        value
+      };
+    }
+  }
+  async *getMany(source, options = {}) {
+    for await (const key of source) {
+      yield this.get(key, options);
+    }
+  }
+  async *deleteMany(source, options = {}) {
+    for await (const key of source) {
+      await this.delete(key, options);
+      yield key;
+    }
+  }
+  batch() {
+    let puts = [];
+    let dels = [];
+    return {
+      put(key, value) {
+        puts.push({
+          key,
+          value
+        });
+      },
+      delete(key) {
+        dels.push(key);
+      },
+      commit: async options => {
+        await drain__default["default"](this.putMany(puts, options));
+        puts = [];
+        await drain__default["default"](this.deleteMany(dels, options));
+        dels = [];
+      }
+    };
+  }
+  async *_all(q, options) {
+    throw new Error('._all is not implemented');
+  }
+  async *_allKeys(q, options) {
+    throw new Error('._allKeys is not implemented');
+  }
+  query(q, options) {
+    let it = this._all(q, options);
+    if (q.prefix != null) {
+      it = filter__default["default"](it, e => e.key.toString().startsWith(q.prefix || ''));
+    }
+    if (Array.isArray(q.filters)) {
+      it = q.filters.reduce((it, f) => filter__default["default"](it, f), it);
+    }
+    if (Array.isArray(q.orders)) {
+      it = q.orders.reduce((it, f) => sortAll(it, f), it);
+    }
+    if (q.offset != null) {
+      let i = 0;
+      it = filter__default["default"](it, () => i++ >= (q.offset || 0));
+    }
+    if (q.limit != null) {
+      it = take__default["default"](it, q.limit);
+    }
+    return it;
+  }
+  queryKeys(q, options) {
+    let it = this._allKeys(q, options);
+    if (q.prefix != null) {
+      it = filter__default["default"](it, cid => cid.toString().startsWith(q.prefix || ''));
+    }
+    if (Array.isArray(q.filters)) {
+      it = q.filters.reduce((it, f) => filter__default["default"](it, f), it);
+    }
+    if (Array.isArray(q.orders)) {
+      it = q.orders.reduce((it, f) => sortAll(it, f), it);
+    }
+    if (q.offset != null) {
+      let i = 0;
+      it = filter__default["default"](it, () => i++ >= q.offset);
+    }
+    if (q.limit != null) {
+      it = take__default["default"](it, q.limit);
+    }
+    return it;
+  }
+}
+
+exports.BaseBlockstore = BaseBlockstore;
+
+
+/***/ }),
+
+/***/ 7595:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errCode = __nccwpck_require__(2997);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+
+function notFoundError(err) {
+  err = err || new Error('Not Found');
+  return errCode__default["default"](err, 'ERR_NOT_FOUND');
+}
+function abortedError(err) {
+  err = err || new Error('Aborted');
+  return errCode__default["default"](err, 'ERR_ABORTED');
+}
+
+exports.abortedError = abortedError;
+exports.notFoundError = notFoundError;
+
+
+/***/ }),
+
+/***/ 6226:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errors = __nccwpck_require__(7595);
+var base = __nccwpck_require__(7714);
+var memory = __nccwpck_require__(6259);
+
+const Errors = { ...errors };
+
+exports.BaseBlockstore = base.BaseBlockstore;
+exports.MemoryBlockstore = memory.MemoryBlockstore;
+exports.Errors = Errors;
+
+
+/***/ }),
+
+/***/ 6259:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var base = __nccwpck_require__(7714);
+var base32 = __nccwpck_require__(2884);
+var raw = __nccwpck_require__(2048);
+var cid = __nccwpck_require__(6447);
+var Digest = __nccwpck_require__(76);
+var errors = __nccwpck_require__(7595);
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var raw__namespace = /*#__PURE__*/_interopNamespace(raw);
+var Digest__namespace = /*#__PURE__*/_interopNamespace(Digest);
+
+class MemoryBlockstore extends base.BaseBlockstore {
+  constructor() {
+    super();
+    this.data = {};
+  }
+  open() {
+    return Promise.resolve();
+  }
+  close() {
+    return Promise.resolve();
+  }
+  async put(key, val) {
+    this.data[base32.base32.encode(key.multihash.bytes)] = val;
+  }
+  async get(key) {
+    const exists = await this.has(key);
+    if (!exists)
+      throw errors.notFoundError();
+    return this.data[base32.base32.encode(key.multihash.bytes)];
+  }
+  async has(key) {
+    return this.data[base32.base32.encode(key.multihash.bytes)] !== undefined;
+  }
+  async delete(key) {
+    delete this.data[base32.base32.encode(key.multihash.bytes)];
+  }
+  async *_all() {
+    yield* Object.entries(this.data).map(([key, value]) => ({
+      key: cid.CID.createV1(raw__namespace.code, Digest__namespace.decode(base32.base32.decode(key))),
+      value
+    }));
+  }
+  async *_allKeys() {
+    yield* Object.entries(this.data).map(([key]) => cid.CID.createV1(raw__namespace.code, Digest__namespace.decode(base32.base32.decode(key))));
+  }
+}
+
+exports.MemoryBlockstore = MemoryBlockstore;
 
 
 /***/ }),
@@ -9670,6 +11790,647 @@ module.exports = function getIterator (obj) {
 
 /***/ }),
 
+/***/ 5252:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+// @ts-ignore
+const SparseArray = __nccwpck_require__(1128)
+const { fromString: uint8ArrayFromString } = __nccwpck_require__(3538)
+
+/**
+ * @typedef {import('./consumable-hash').InfiniteHash} InfiniteHash
+ * @typedef {import('../').UserBucketOptions} UserBucketOptions
+ */
+
+/**
+ * @template V
+ * @typedef {object} BucketChild<V>
+ * @property {string} key
+ * @property {V} value
+ * @property {InfiniteHash} hash
+ */
+
+/**
+ * @template B
+ *
+ * @typedef {object} SA<B>
+ * @property {number} length
+ * @property {() => B[]} compactArray
+ * @property {(i: number) => B} get
+ * @property {(i: number, value: B) => void} set
+ * @property {<A> (fn: (acc: A, curr: B, index: number) => A, initial: A) => B} reduce
+ * @property {(fn: (item: B) => boolean) => B | undefined} find
+ * @property {() => number[]} bitField
+ * @property {(i: number) => void} unset
+ */
+
+/**
+ * @template T
+ *
+ * @typedef {object} BucketPosition<T>
+ * @property {Bucket<T>} bucket
+ * @property {number} pos
+ * @property {InfiniteHash} hash
+ * @property {BucketChild<T>} [existingChild]
+ */
+
+/**
+ * @typedef {object} BucketOptions
+ * @property {number} bits
+ * @property {(value: Uint8Array | InfiniteHash) => InfiniteHash} hash
+ */
+
+/**
+ * @template T
+ */
+class Bucket {
+  /**
+   * @param {BucketOptions} options
+   * @param {Bucket<T>} [parent]
+   * @param {number} [posAtParent=0]
+   */
+  constructor (options, parent, posAtParent = 0) {
+    this._options = options
+    this._popCount = 0
+    this._parent = parent
+    this._posAtParent = posAtParent
+
+    /** @type {SA<Bucket<T> | BucketChild<T>>} */
+    this._children = new SparseArray()
+
+    /** @type {string | null} */
+    this.key = null
+  }
+
+  /**
+   * @param {string} key
+   * @param {T} value
+   */
+  async put (key, value) {
+    const place = await this._findNewBucketAndPos(key)
+
+    await place.bucket._putAt(place, key, value)
+  }
+
+  /**
+   * @param {string} key
+   */
+  async get (key) {
+    const child = await this._findChild(key)
+
+    if (child) {
+      return child.value
+    }
+  }
+
+  /**
+   * @param {string} key
+   */
+  async del (key) {
+    const place = await this._findPlace(key)
+    const child = place.bucket._at(place.pos)
+
+    if (child && child.key === key) {
+      place.bucket._delAt(place.pos)
+    }
+  }
+
+  /**
+   * @returns {number}
+   */
+  leafCount () {
+    const children = this._children.compactArray()
+
+    return children.reduce((acc, child) => {
+      if (child instanceof Bucket) {
+        return acc + child.leafCount()
+      }
+
+      return acc + 1
+    }, 0)
+  }
+
+  childrenCount () {
+    return this._children.length
+  }
+
+  onlyChild () {
+    return this._children.get(0)
+  }
+
+  /**
+   * @returns {Iterable<BucketChild<T>>}
+   */
+  * eachLeafSeries () {
+    const children = this._children.compactArray()
+
+    for (const child of children) {
+      if (child instanceof Bucket) {
+        yield * child.eachLeafSeries()
+      } else {
+        yield child
+      }
+    }
+
+    // this is necessary because tsc requires a @return annotation as it
+    // can't derive a return type due to the recursion, and eslint requires
+    // a return statement when there is a @return annotation
+    return []
+  }
+
+  /**
+   * @param {(value: BucketChild<T>, index: number) => T} map
+   * @param {(reduced: any) => any} reduce
+   */
+  serialize (map, reduce) {
+    /** @type {T[]} */
+    const acc = []
+    // serialize to a custom non-sparse representation
+    return reduce(this._children.reduce((acc, child, index) => {
+      if (child) {
+        if (child instanceof Bucket) {
+          acc.push(child.serialize(map, reduce))
+        } else {
+          acc.push(map(child, index))
+        }
+      }
+      return acc
+    }, acc))
+  }
+
+  /**
+   * @param {(value: BucketChild<T>) => Promise<T[]>} asyncMap
+   * @param {(reduced: any) => Promise<any>} asyncReduce
+   */
+  asyncTransform (asyncMap, asyncReduce) {
+    return asyncTransformBucket(this, asyncMap, asyncReduce)
+  }
+
+  toJSON () {
+    return this.serialize(mapNode, reduceNodes)
+  }
+
+  prettyPrint () {
+    return JSON.stringify(this.toJSON(), null, '  ')
+  }
+
+  tableSize () {
+    return Math.pow(2, this._options.bits)
+  }
+
+  /**
+   * @param {string} key
+   * @returns {Promise<BucketChild<T> | undefined>}
+   */
+  async _findChild (key) {
+    const result = await this._findPlace(key)
+    const child = result.bucket._at(result.pos)
+
+    if (child instanceof Bucket) {
+      // should not be possible, this._findPlace should always
+      // return a location for a child, not a bucket
+      return undefined
+    }
+
+    if (child && child.key === key) {
+      return child
+    }
+  }
+
+  /**
+   * @param {string | InfiniteHash} key
+   * @returns {Promise<BucketPosition<T>>}
+   */
+  async _findPlace (key) {
+    const hashValue = this._options.hash(typeof key === 'string' ? uint8ArrayFromString(key) : key)
+    const index = await hashValue.take(this._options.bits)
+
+    const child = this._children.get(index)
+
+    if (child instanceof Bucket) {
+      return child._findPlace(hashValue)
+    }
+
+    return {
+      bucket: this,
+      pos: index,
+      hash: hashValue,
+      existingChild: child
+    }
+  }
+
+  /**
+   * @param {string | InfiniteHash} key
+   * @returns {Promise<BucketPosition<T>>}
+   */
+  async _findNewBucketAndPos (key) {
+    const place = await this._findPlace(key)
+
+    if (place.existingChild && place.existingChild.key !== key) {
+      // conflict
+      const bucket = new Bucket(this._options, place.bucket, place.pos)
+      place.bucket._putObjectAt(place.pos, bucket)
+
+      // put the previous value
+      const newPlace = await bucket._findPlace(place.existingChild.hash)
+      newPlace.bucket._putAt(newPlace, place.existingChild.key, place.existingChild.value)
+
+      return bucket._findNewBucketAndPos(place.hash)
+    }
+
+    // no conflict, we found the place
+    return place
+  }
+
+  /**
+   * @param {BucketPosition<T>} place
+   * @param {string} key
+   * @param {T} value
+   */
+  _putAt (place, key, value) {
+    this._putObjectAt(place.pos, {
+      key: key,
+      value: value,
+      hash: place.hash
+    })
+  }
+
+  /**
+   * @param {number} pos
+   * @param {Bucket<T> | BucketChild<T>} object
+   */
+  _putObjectAt (pos, object) {
+    if (!this._children.get(pos)) {
+      this._popCount++
+    }
+    this._children.set(pos, object)
+  }
+
+  /**
+   * @param {number} pos
+   */
+  _delAt (pos) {
+    if (pos === -1) {
+      throw new Error('Invalid position')
+    }
+
+    if (this._children.get(pos)) {
+      this._popCount--
+    }
+    this._children.unset(pos)
+    this._level()
+  }
+
+  _level () {
+    if (this._parent && this._popCount <= 1) {
+      if (this._popCount === 1) {
+        // remove myself from parent, replacing me with my only child
+        const onlyChild = this._children.find(exists)
+
+        if (onlyChild && !(onlyChild instanceof Bucket)) {
+          const hash = onlyChild.hash
+          hash.untake(this._options.bits)
+          const place = {
+            pos: this._posAtParent,
+            hash: hash,
+            bucket: this._parent
+          }
+          this._parent._putAt(place, onlyChild.key, onlyChild.value)
+        }
+      } else {
+        this._parent._delAt(this._posAtParent)
+      }
+    }
+  }
+
+  /**
+   * @param {number} index
+   * @returns {BucketChild<T> | Bucket<T> | undefined}
+   */
+  _at (index) {
+    return this._children.get(index)
+  }
+}
+
+/**
+ * @param {any} o
+ */
+function exists (o) {
+  return Boolean(o)
+}
+
+/**
+ *
+ * @param {*} node
+ * @param {number} index
+ */
+function mapNode (node, index) {
+  return node.key
+}
+
+/**
+ * @param {*} nodes
+ */
+function reduceNodes (nodes) {
+  return nodes
+}
+
+/**
+ * @template T
+ *
+ * @param {Bucket<T>} bucket
+ * @param {(value: BucketChild<T>) => Promise<T[]>} asyncMap
+ * @param {(reduced: any) => Promise<any>} asyncReduce
+ */
+async function asyncTransformBucket (bucket, asyncMap, asyncReduce) {
+  const output = []
+
+  for (const child of bucket._children.compactArray()) {
+    if (child instanceof Bucket) {
+      await asyncTransformBucket(child, asyncMap, asyncReduce)
+    } else {
+      const mappedChildren = await asyncMap(child)
+
+      output.push({
+        bitField: bucket._children.bitField(),
+        children: mappedChildren
+      })
+    }
+  }
+
+  return asyncReduce(output)
+}
+
+module.exports = Bucket
+
+
+/***/ }),
+
+/***/ 3981:
+/***/ ((module) => {
+
+"use strict";
+
+
+const START_MASKS = [
+  0b11111111,
+  0b11111110,
+  0b11111100,
+  0b11111000,
+  0b11110000,
+  0b11100000,
+  0b11000000,
+  0b10000000
+]
+
+const STOP_MASKS = [
+  0b00000001,
+  0b00000011,
+  0b00000111,
+  0b00001111,
+  0b00011111,
+  0b00111111,
+  0b01111111,
+  0b11111111
+]
+
+module.exports = class ConsumableBuffer {
+  /**
+   * @param {Uint8Array} value
+   */
+  constructor (value) {
+    this._value = value
+    this._currentBytePos = value.length - 1
+    this._currentBitPos = 7
+  }
+
+  availableBits () {
+    return this._currentBitPos + 1 + this._currentBytePos * 8
+  }
+
+  totalBits () {
+    return this._value.length * 8
+  }
+
+  /**
+   * @param {number} bits
+   */
+  take (bits) {
+    let pendingBits = bits
+    let result = 0
+    while (pendingBits && this._haveBits()) {
+      const byte = this._value[this._currentBytePos]
+      const availableBits = this._currentBitPos + 1
+      const taking = Math.min(availableBits, pendingBits)
+      const value = byteBitsToInt(byte, availableBits - taking, taking)
+      result = (result << taking) + value
+
+      pendingBits -= taking
+
+      this._currentBitPos -= taking
+      if (this._currentBitPos < 0) {
+        this._currentBitPos = 7
+        this._currentBytePos--
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * @param {number} bits
+   */
+  untake (bits) {
+    this._currentBitPos += bits
+    while (this._currentBitPos > 7) {
+      this._currentBitPos -= 8
+      this._currentBytePos += 1
+    }
+  }
+
+  _haveBits () {
+    return this._currentBytePos >= 0
+  }
+}
+
+/**
+ * @param {number} byte
+ * @param {number} start
+ * @param {number} length
+ */
+function byteBitsToInt (byte, start, length) {
+  const mask = maskFor(start, length)
+  return (byte & mask) >>> start
+}
+
+/**
+ * @param {number} start
+ * @param {number} length
+ */
+function maskFor (start, length) {
+  return START_MASKS[start] & STOP_MASKS[Math.min(length + start - 1, 7)]
+}
+
+
+/***/ }),
+
+/***/ 2950:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const ConsumableBuffer = __nccwpck_require__(3981)
+const { concat: uint8ArrayConcat } = __nccwpck_require__(5114)
+
+/**
+ * @param {(value: Uint8Array) => Promise<Uint8Array>} hashFn
+ */
+function wrapHash (hashFn) {
+  /**
+   * @param {InfiniteHash | Uint8Array} value
+   */
+  function hashing (value) {
+    if (value instanceof InfiniteHash) {
+      // already a hash. return it
+      return value
+    } else {
+      return new InfiniteHash(value, hashFn)
+    }
+  }
+
+  return hashing
+}
+
+class InfiniteHash {
+  /**
+   *
+   * @param {Uint8Array} value
+   * @param {(value: Uint8Array) => Promise<Uint8Array>} hashFn
+   */
+  constructor (value, hashFn) {
+    if (!(value instanceof Uint8Array)) {
+      throw new Error('can only hash Uint8Arrays')
+    }
+
+    this._value = value
+    this._hashFn = hashFn
+    this._depth = -1
+    this._availableBits = 0
+    this._currentBufferIndex = 0
+
+    /** @type {ConsumableBuffer[]} */
+    this._buffers = []
+  }
+
+  /**
+   * @param {number} bits
+   */
+  async take (bits) {
+    let pendingBits = bits
+
+    while (this._availableBits < pendingBits) {
+      await this._produceMoreBits()
+    }
+
+    let result = 0
+
+    while (pendingBits > 0) {
+      const hash = this._buffers[this._currentBufferIndex]
+      const available = Math.min(hash.availableBits(), pendingBits)
+      const took = hash.take(available)
+      result = (result << available) + took
+      pendingBits -= available
+      this._availableBits -= available
+
+      if (hash.availableBits() === 0) {
+        this._currentBufferIndex++
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * @param {number} bits
+   */
+  untake (bits) {
+    let pendingBits = bits
+
+    while (pendingBits > 0) {
+      const hash = this._buffers[this._currentBufferIndex]
+      const availableForUntake = Math.min(hash.totalBits() - hash.availableBits(), pendingBits)
+      hash.untake(availableForUntake)
+      pendingBits -= availableForUntake
+      this._availableBits += availableForUntake
+
+      if (this._currentBufferIndex > 0 && hash.totalBits() === hash.availableBits()) {
+        this._depth--
+        this._currentBufferIndex--
+      }
+    }
+  }
+
+  async _produceMoreBits () {
+    this._depth++
+
+    const value = this._depth ? uint8ArrayConcat([this._value, Uint8Array.from([this._depth])]) : this._value
+    const hashValue = await this._hashFn(value)
+    const buffer = new ConsumableBuffer(hashValue)
+
+    this._buffers.push(buffer)
+    this._availableBits += buffer.availableBits()
+  }
+}
+
+module.exports = wrapHash
+module.exports.InfiniteHash = InfiniteHash
+
+
+/***/ }),
+
+/***/ 7820:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const Bucket = __nccwpck_require__(5252)
+const wrapHash = __nccwpck_require__(2950)
+
+/**
+ * @typedef {object} UserBucketOptions
+ * @property {(value: Uint8Array) => Promise<Uint8Array>} hashFn
+ * @property {number} [bits=8]
+ */
+
+/**
+ * @param {UserBucketOptions} options
+ */
+function createHAMT (options) {
+  if (!options || !options.hashFn) {
+    throw new Error('please define an options.hashFn')
+  }
+
+  const bucketOptions = {
+    bits: options.bits || 8,
+    hash: wrapHash(options.hashFn)
+  }
+
+  return new Bucket(bucketOptions)
+}
+
+module.exports = {
+  createHAMT,
+  Bucket
+}
+
+
+/***/ }),
+
 /***/ 1621:
 /***/ ((module) => {
 
@@ -12686,28 +15447,277 @@ module.exports = ip;
 
 /***/ }),
 
-/***/ 4866:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ 2689:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FsBlockStore = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const multiformats_1 = __nccwpck_require__(5978);
+const blockstore_core_1 = __nccwpck_require__(6226);
+class FsBlockStore extends blockstore_core_1.BaseBlockstore {
+    constructor() {
+        super();
+        this.path = `${os_1.default.tmpdir()}/${(parseInt(String(Math.random() * 1e9), 10)).toString() + Date.now()}`;
+        this._opened = false;
+    }
+    async _open() {
+        if (this._opening) {
+            await this._opening;
+        }
+        else {
+            this._opening = fs_1.default.promises.mkdir(this.path);
+            await this._opening;
+            this._opened = true;
+        }
+    }
+    async put(cid, bytes) {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cidStr = cid.toString();
+        const location = `${this.path}/${cidStr}`;
+        await fs_1.default.promises.writeFile(location, bytes);
+    }
+    async get(cid) {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cidStr = cid.toString();
+        const location = `${this.path}/${cidStr}`;
+        const bytes = await fs_1.default.promises.readFile(location);
+        return bytes;
+    }
+    async has(cid) {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cidStr = cid.toString();
+        const location = `${this.path}/${cidStr}`;
+        try {
+            await fs_1.default.promises.access(location);
+            return true;
+        }
+        catch (err) {
+            return false;
+        }
+    }
+    async *blocks() {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cids = await fs_1.default.promises.readdir(this.path);
+        for (const cidStr of cids) {
+            const location = `${this.path}/${cidStr}`;
+            const bytes = await fs_1.default.promises.readFile(location);
+            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
+        }
+    }
+    async close() {
+        if (this._opened) {
+            await fs_1.default.promises.rm(this.path, { recursive: true });
+        }
+        this._opened = false;
+    }
+}
+exports.FsBlockStore = FsBlockStore;
 
-var http = __nccwpck_require__(3685);
-var https = __nccwpck_require__(5687);
 
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+/***/ }),
 
-var http__default = /*#__PURE__*/_interopDefaultLegacy(http);
-var https__default = /*#__PURE__*/_interopDefaultLegacy(https);
+/***/ 7913:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-var agent = url => {
-  if (!url) {
-    throw new Error('URL required');
-  }
-  return url.protocol.startsWith('https') ? https__default["default"].Agent : http__default["default"].Agent;
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MemoryBlockStore = void 0;
+const multiformats_1 = __nccwpck_require__(5978);
+const blockstore_core_1 = __nccwpck_require__(6226);
+class MemoryBlockStore extends blockstore_core_1.BaseBlockstore {
+    constructor() {
+        super();
+        this.store = new Map();
+    }
+    async *blocks() {
+        for (const [cidStr, bytes] of this.store.entries()) {
+            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
+        }
+    }
+    put(cid, bytes) {
+        this.store.set(cid.toString(), bytes);
+        return Promise.resolve();
+    }
+    get(cid) {
+        const bytes = this.store.get(cid.toString());
+        if (!bytes) {
+            throw new Error(`block with cid ${cid.toString()} no found`);
+        }
+        return Promise.resolve(bytes);
+    }
+    has(cid) {
+        return Promise.resolve(this.store.has(cid.toString()));
+    }
+    close() {
+        this.store.clear();
+        return Promise.resolve();
+    }
+}
+exports.MemoryBlockStore = MemoryBlockStore;
+
+
+/***/ }),
+
+/***/ 1563:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.unixfsImporterOptionsDefault = void 0;
+const sha2_1 = __nccwpck_require__(6987);
+exports.unixfsImporterOptionsDefault = {
+    cidVersion: 1,
+    chunker: 'fixed',
+    maxChunkSize: 262144,
+    hasher: sha2_1.sha256,
+    rawLeaves: true,
+    wrapWithDirectory: true,
+    maxChildrenPerNode: 174
 };
 
-module.exports = agent;
+
+/***/ }),
+
+/***/ 7094:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.packToFs = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const move_file_1 = __importDefault(__nccwpck_require__(5941));
+const stream_1 = __nccwpck_require__(1690);
+const fs_2 = __nccwpck_require__(2689);
+async function packToFs({ input, output, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves, customStreamSink }) {
+    const blockstore = userBlockstore ? userBlockstore : new fs_2.FsBlockStore();
+    const location = output || `${os_1.default.tmpdir()}/${(parseInt(String(Math.random() * 1e9), 10)).toString() + Date.now()}`;
+    const writable = fs_1.default.createWriteStream(location);
+    const { root } = await (0, stream_1.packToStream)({
+        input,
+        writable,
+        blockstore,
+        hasher,
+        maxChunkSize,
+        maxChildrenPerNode,
+        wrapWithDirectory,
+        rawLeaves,
+        customStreamSink
+    });
+    if (!userBlockstore) {
+        await blockstore.close();
+    }
+    // Move to work dir
+    if (!output) {
+        const basename = typeof input === 'string' ? path_1.default.parse(path_1.default.basename(input)).name : root.toString();
+        const filename = `${basename}.car`;
+        await (0, move_file_1.default)(location, `${process.cwd()}/${filename}`);
+        return { root, filename };
+    }
+    return { root, filename: output };
+}
+exports.packToFs = packToFs;
+
+
+/***/ }),
+
+/***/ 1690:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.packToStream = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const stream_1 = __nccwpck_require__(2781);
+const it_last_1 = __importDefault(__nccwpck_require__(7123));
+const it_pipe_1 = __importDefault(__nccwpck_require__(7185));
+const car_1 = __nccwpck_require__(2805);
+const ipfs_unixfs_importer_1 = __nccwpck_require__(1626);
+const normalise_input_multiple_1 = __nccwpck_require__(9285);
+const glob_source_js_1 = __importDefault(__nccwpck_require__(2524));
+const memory_1 = __nccwpck_require__(7913);
+const constants_1 = __nccwpck_require__(1563);
+// Node version of toCar with Node Stream Writable
+async function packToStream({ input, writable, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves, customStreamSink }) {
+    if (!input || (Array.isArray(input) && !input.length)) {
+        throw new Error('given input could not be parsed correctly');
+    }
+    input = typeof input === 'string' ? [input] : input;
+    const blockstore = userBlockstore ? userBlockstore : new memory_1.MemoryBlockStore();
+    // Consume the source
+    const rootEntry = await (0, it_last_1.default)((0, it_pipe_1.default)(legacyGlobSource(input), source => (0, normalise_input_multiple_1.normaliseInput)(source), (source) => (0, ipfs_unixfs_importer_1.importer)(source, blockstore, {
+        ...constants_1.unixfsImporterOptionsDefault,
+        hasher: hasher || constants_1.unixfsImporterOptionsDefault.hasher,
+        maxChunkSize: maxChunkSize || constants_1.unixfsImporterOptionsDefault.maxChunkSize,
+        maxChildrenPerNode: maxChildrenPerNode || constants_1.unixfsImporterOptionsDefault.maxChildrenPerNode,
+        wrapWithDirectory: wrapWithDirectory === false ? false : constants_1.unixfsImporterOptionsDefault.wrapWithDirectory,
+        rawLeaves: rawLeaves == null ? constants_1.unixfsImporterOptionsDefault.rawLeaves : rawLeaves
+    }), customStreamSink ? customStreamSink : (sources) => sources));
+    if (!rootEntry || !rootEntry.cid) {
+        throw new Error('given input could not be parsed correctly');
+    }
+    const root = rootEntry.cid;
+    const { writer, out } = await car_1.CarWriter.create([root]);
+    stream_1.Readable.from(out).pipe(writable);
+    for await (const block of blockstore.blocks()) {
+        await writer.put(block);
+    }
+    await writer.close();
+    if (!userBlockstore) {
+        await blockstore.close();
+    }
+    return { root };
+}
+exports.packToStream = packToStream;
+/**
+ * This function replicates the old behaviour of globSource to not introduce a
+ * breaking change.
+ *
+ * TODO: figure out what the breaking change will be.
+ */
+async function* legacyGlobSource(input) {
+    for await (const p of input) {
+        const resolvedPath = path_1.default.resolve(p);
+        const stat = await fs_1.default.promises.stat(resolvedPath);
+        const fileName = path_1.default.basename(resolvedPath);
+        if (stat.isDirectory()) {
+            yield { path: fileName };
+            for await (const candidate of (0, glob_source_js_1.default)(resolvedPath, '**/*')) {
+                yield { ...candidate, path: path_1.default.join(fileName, candidate.path) };
+            }
+        }
+        else {
+            yield { path: fileName, content: fs_1.default.createReadStream(resolvedPath) };
+        }
+    }
+}
 
 
 /***/ }),
@@ -12786,144 +15796,6 @@ async function toFileObject(input, normaliseContent) {
 }
 
 exports.normaliseCandidateMultiple = normaliseCandidateMultiple;
-
-
-/***/ }),
-
-/***/ 3954:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var errCode = __nccwpck_require__(2997);
-var browserStreamToIt = __nccwpck_require__(664);
-var itPeekable = __nccwpck_require__(2276);
-var utils = __nccwpck_require__(5045);
-var ipfsUnixfs = __nccwpck_require__(4103);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
-var browserStreamToIt__default = /*#__PURE__*/_interopDefaultLegacy(browserStreamToIt);
-var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
-
-async function* normaliseCandidateSingle(input, normaliseContent) {
-  if (input === null || input === undefined) {
-    throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
-  }
-  if (typeof input === 'string' || input instanceof String) {
-    yield toFileObject(input.toString(), normaliseContent);
-    return;
-  }
-  if (utils.isBytes(input) || utils.isBlob(input)) {
-    yield toFileObject(input, normaliseContent);
-    return;
-  }
-  if (utils.isReadableStream(input)) {
-    input = browserStreamToIt__default["default"](input);
-  }
-  if (Symbol.iterator in input || Symbol.asyncIterator in input) {
-    const peekable = itPeekable__default["default"](input);
-    const {value, done} = await peekable.peek();
-    if (done) {
-      yield { content: [] };
-      return;
-    }
-    peekable.push(value);
-    if (Number.isInteger(value) || utils.isBytes(value) || typeof value === 'string' || value instanceof String) {
-      yield toFileObject(peekable, normaliseContent);
-      return;
-    }
-    throw errCode__default["default"](new Error('Unexpected input: multiple items passed - if you are using ipfs.add, please use ipfs.addAll instead'), 'ERR_UNEXPECTED_INPUT');
-  }
-  if (utils.isFileObject(input)) {
-    yield toFileObject(input, normaliseContent);
-    return;
-  }
-  throw errCode__default["default"](new Error('Unexpected input: cannot convert "' + typeof input + '" into ImportCandidate'), 'ERR_UNEXPECTED_INPUT');
-}
-async function toFileObject(input, normaliseContent) {
-  const {path, mode, mtime, content} = input;
-  const file = {
-    path: path || '',
-    mode: ipfsUnixfs.parseMode(mode),
-    mtime: ipfsUnixfs.parseMtime(mtime)
-  };
-  if (content) {
-    file.content = await normaliseContent(content);
-  } else if (!path) {
-    file.content = await normaliseContent(input);
-  }
-  return file;
-}
-
-exports.normaliseCandidateSingle = normaliseCandidateSingle;
-
-
-/***/ }),
-
-/***/ 9147:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var errCode = __nccwpck_require__(2997);
-var itPeekable = __nccwpck_require__(2276);
-var browserStreamToIt = __nccwpck_require__(664);
-var all = __nccwpck_require__(5810);
-var utils = __nccwpck_require__(5045);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
-var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
-var browserStreamToIt__default = /*#__PURE__*/_interopDefaultLegacy(browserStreamToIt);
-var all__default = /*#__PURE__*/_interopDefaultLegacy(all);
-
-async function normaliseContent(input) {
-  if (utils.isBytes(input)) {
-    return new Blob([input]);
-  }
-  if (typeof input === 'string' || input instanceof String) {
-    return new Blob([input.toString()]);
-  }
-  if (utils.isBlob(input)) {
-    return input;
-  }
-  if (utils.isReadableStream(input)) {
-    input = browserStreamToIt__default["default"](input);
-  }
-  if (Symbol.iterator in input || Symbol.asyncIterator in input) {
-    const peekable = itPeekable__default["default"](input);
-    const {value, done} = await peekable.peek();
-    if (done) {
-      return itToBlob(peekable);
-    }
-    peekable.push(value);
-    if (Number.isInteger(value)) {
-      return new Blob([Uint8Array.from(await all__default["default"](peekable))]);
-    }
-    if (utils.isBytes(value) || typeof value === 'string' || value instanceof String) {
-      return itToBlob(peekable);
-    }
-  }
-  throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
-}
-async function itToBlob(stream) {
-  const parts = [];
-  for await (const chunk of stream) {
-    parts.push(chunk);
-  }
-  return new Blob(parts);
-}
-
-exports.normaliseContent = normaliseContent;
 
 
 /***/ }),
@@ -13007,26 +15879,6 @@ exports.normaliseContent = normaliseContent;
 
 /***/ }),
 
-/***/ 6054:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var normaliseContent_browser = __nccwpck_require__(9147);
-var normaliseCandidateMultiple = __nccwpck_require__(6974);
-
-function normaliseInput(input) {
-  return normaliseCandidateMultiple.normaliseCandidateMultiple(input, normaliseContent_browser.normaliseContent, true);
-}
-
-exports.normaliseInput = normaliseInput;
-
-
-/***/ }),
-
 /***/ 9285:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -13040,26 +15892,6 @@ var normaliseCandidateMultiple = __nccwpck_require__(6974);
 
 function normaliseInput(input) {
   return normaliseCandidateMultiple.normaliseCandidateMultiple(input, normaliseContent.normaliseContent);
-}
-
-exports.normaliseInput = normaliseInput;
-
-
-/***/ }),
-
-/***/ 4304:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var normaliseContent = __nccwpck_require__(2840);
-var normaliseCandidateSingle = __nccwpck_require__(3954);
-
-function normaliseInput(input) {
-  return normaliseCandidateSingle.normaliseCandidateSingle(input, normaliseContent.normaliseContent);
 }
 
 exports.normaliseInput = normaliseInput;
@@ -13094,482 +15926,6 @@ exports.isReadableStream = isReadableStream;
 
 /***/ }),
 
-/***/ 2983:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-function modeToString(mode) {
-  if (mode == null) {
-    return undefined;
-  }
-  if (typeof mode === 'string') {
-    return mode;
-  }
-  return mode.toString(8).padStart(4, '0');
-}
-
-exports.modeToString = modeToString;
-
-
-/***/ }),
-
-/***/ 3986:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-const LOAD_BASE = name => Promise.reject(new Error(`No base found for "${ name }"`));
-class Multibases {
-  constructor(options) {
-    this._basesByName = {};
-    this._basesByPrefix = {};
-    this._loadBase = options.loadBase || LOAD_BASE;
-    for (const base of options.bases) {
-      this.addBase(base);
-    }
-  }
-  addBase(base) {
-    if (this._basesByName[base.name] || this._basesByPrefix[base.prefix]) {
-      throw new Error(`Codec already exists for codec "${ base.name }"`);
-    }
-    this._basesByName[base.name] = base;
-    this._basesByPrefix[base.prefix] = base;
-  }
-  removeBase(base) {
-    delete this._basesByName[base.name];
-    delete this._basesByPrefix[base.prefix];
-  }
-  async getBase(nameOrPrefix) {
-    if (this._basesByName[nameOrPrefix]) {
-      return this._basesByName[nameOrPrefix];
-    }
-    if (this._basesByPrefix[nameOrPrefix]) {
-      return this._basesByPrefix[nameOrPrefix];
-    }
-    const base = await this._loadBase(nameOrPrefix);
-    if (this._basesByName[base.name] == null && this._basesByPrefix[base.prefix] == null) {
-      this.addBase(base);
-    }
-    return base;
-  }
-  listBases() {
-    return Object.values(this._basesByName);
-  }
-}
-
-exports.Multibases = Multibases;
-
-
-/***/ }),
-
-/***/ 5692:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-const LOAD_CODEC = codeOrName => Promise.reject(new Error(`No codec found for "${ codeOrName }"`));
-class Multicodecs {
-  constructor(options) {
-    this._codecsByName = {};
-    this._codecsByCode = {};
-    this._loadCodec = options.loadCodec || LOAD_CODEC;
-    for (const codec of options.codecs) {
-      this.addCodec(codec);
-    }
-  }
-  addCodec(codec) {
-    if (this._codecsByName[codec.name] || this._codecsByCode[codec.code]) {
-      throw new Error(`Resolver already exists for codec "${ codec.name }"`);
-    }
-    this._codecsByName[codec.name] = codec;
-    this._codecsByCode[codec.code] = codec;
-  }
-  removeCodec(codec) {
-    delete this._codecsByName[codec.name];
-    delete this._codecsByCode[codec.code];
-  }
-  async getCodec(code) {
-    const table = typeof code === 'string' ? this._codecsByName : this._codecsByCode;
-    if (table[code]) {
-      return table[code];
-    }
-    const codec = await this._loadCodec(code);
-    if (table[code] == null) {
-      this.addCodec(codec);
-    }
-    return codec;
-  }
-  listCodecs() {
-    return Object.values(this._codecsByName);
-  }
-}
-
-exports.Multicodecs = Multicodecs;
-
-
-/***/ }),
-
-/***/ 4877:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-const LOAD_HASHER = codeOrName => Promise.reject(new Error(`No hasher found for "${ codeOrName }"`));
-class Multihashes {
-  constructor(options) {
-    this._hashersByName = {};
-    this._hashersByCode = {};
-    this._loadHasher = options.loadHasher || LOAD_HASHER;
-    for (const hasher of options.hashers) {
-      this.addHasher(hasher);
-    }
-  }
-  addHasher(hasher) {
-    if (this._hashersByName[hasher.name] || this._hashersByCode[hasher.code]) {
-      throw new Error(`Resolver already exists for codec "${ hasher.name }"`);
-    }
-    this._hashersByName[hasher.name] = hasher;
-    this._hashersByCode[hasher.code] = hasher;
-  }
-  removeHasher(hasher) {
-    delete this._hashersByName[hasher.name];
-    delete this._hashersByCode[hasher.code];
-  }
-  async getHasher(code) {
-    const table = typeof code === 'string' ? this._hashersByName : this._hashersByCode;
-    if (table[code]) {
-      return table[code];
-    }
-    const hasher = await this._loadHasher(code);
-    if (table[code] == null) {
-      this.addHasher(hasher);
-    }
-    return hasher;
-  }
-  listHashers() {
-    return Object.values(this._hashersByName);
-  }
-}
-
-exports.Multihashes = Multihashes;
-
-
-/***/ }),
-
-/***/ 5705:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var normaliseInputMultiple_browser = __nccwpck_require__(6054);
-var modeToString = __nccwpck_require__(2983);
-
-async function multipartRequest(source, abortController, headers = {}) {
-  const parts = [];
-  const formData = new FormData();
-  let index = 0;
-  let total = 0;
-  for await (const {content, path, mode, mtime} of normaliseInputMultiple_browser.normaliseInput(source)) {
-    let fileSuffix = '';
-    const type = content ? 'file' : 'dir';
-    if (index > 0) {
-      fileSuffix = `-${ index }`;
-    }
-    let fieldName = type + fileSuffix;
-    const qs = [];
-    if (mode !== null && mode !== undefined) {
-      qs.push(`mode=${ modeToString.modeToString(mode) }`);
-    }
-    if (mtime != null) {
-      const {secs, nsecs} = mtime;
-      qs.push(`mtime=${ secs }`);
-      if (nsecs != null) {
-        qs.push(`mtime-nsecs=${ nsecs }`);
-      }
-    }
-    if (qs.length) {
-      fieldName = `${ fieldName }?${ qs.join('&') }`;
-    }
-    if (content) {
-      formData.set(fieldName, content, path != null ? encodeURIComponent(path) : undefined);
-      const end = total + content.size;
-      parts.push({
-        name: path,
-        start: total,
-        end
-      });
-      total = end;
-    } else if (path != null) {
-      formData.set(fieldName, new File([''], encodeURIComponent(path), { type: 'application/x-directory' }));
-    } else {
-      throw new Error('path or content or both must be set');
-    }
-    index++;
-  }
-  return {
-    total,
-    parts,
-    headers,
-    body: formData
-  };
-}
-
-exports.multipartRequest = multipartRequest;
-
-
-/***/ }),
-
-/***/ 2099:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var env_js = __nccwpck_require__(8804);
-var multipartRequest_node = __nccwpck_require__(7778);
-var multipartRequest_browser = __nccwpck_require__(5705);
-var nanoid = __nccwpck_require__(7592);
-
-async function multipartRequest(source, abortController, headers = {}, boundary = `-----------------------------${ nanoid.nanoid() }`) {
-  let req = multipartRequest_node.multipartRequest;
-  if (env_js.isElectronRenderer) {
-    req = multipartRequest_browser.multipartRequest;
-  }
-  return req(source, abortController, headers, boundary);
-}
-
-exports.multipartRequest = multipartRequest;
-
-
-/***/ }),
-
-/***/ 7778:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var normaliseInputMultiple = __nccwpck_require__(9285);
-var nanoid = __nccwpck_require__(7592);
-var modeToString = __nccwpck_require__(2983);
-var mergeOpts = __nccwpck_require__(2555);
-var toStream = __nccwpck_require__(3259);
-var debug = __nccwpck_require__(8237);
-var itPeekable = __nccwpck_require__(2276);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var mergeOpts__default = /*#__PURE__*/_interopDefaultLegacy(mergeOpts);
-var toStream__default = /*#__PURE__*/_interopDefaultLegacy(toStream);
-var debug__default = /*#__PURE__*/_interopDefaultLegacy(debug);
-var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
-
-const merge = mergeOpts__default["default"].bind({ ignoreUndefined: true });
-const log = debug__default["default"]('ipfs:core-utils:multipart-request');
-async function multipartRequest(source, abortController, headers = {}, boundary = `-----------------------------${ nanoid.nanoid() }`) {
-  async function* streamFiles(source) {
-    try {
-      let index = 0;
-      for await (const {content, path, mode, mtime} of source) {
-        let fileSuffix = '';
-        const type = content ? 'file' : 'dir';
-        if (index > 0) {
-          yield '\r\n';
-          fileSuffix = `-${ index }`;
-        }
-        let fieldName = type + fileSuffix;
-        const qs = [];
-        if (mode !== null && mode !== undefined) {
-          qs.push(`mode=${ modeToString.modeToString(mode) }`);
-        }
-        if (mtime != null) {
-          const {secs, nsecs} = mtime;
-          qs.push(`mtime=${ secs }`);
-          if (nsecs != null) {
-            qs.push(`mtime-nsecs=${ nsecs }`);
-          }
-        }
-        if (qs.length) {
-          fieldName = `${ fieldName }?${ qs.join('&') }`;
-        }
-        yield `--${ boundary }\r\n`;
-        yield `Content-Disposition: form-data; name="${ fieldName }"; filename="${ encodeURIComponent(path || '') }"\r\n`;
-        yield `Content-Type: ${ content ? 'application/octet-stream' : 'application/x-directory' }\r\n`;
-        yield '\r\n';
-        if (content) {
-          yield* content;
-        }
-        index++;
-      }
-    } catch (err) {
-      log(err);
-      abortController.abort();
-    } finally {
-      yield `\r\n--${ boundary }--\r\n`;
-    }
-  }
-  const peekable = itPeekable__default["default"](normaliseInputMultiple.normaliseInput(source));
-  const {value, done} = await peekable.peek();
-  if (!done) {
-    peekable.push(value);
-  }
-  return {
-    parts: null,
-    total: -1,
-    headers: merge(headers, { 'Content-Type': `multipart/form-data; boundary=${ boundary }` }),
-    body: toStream__default["default"](streamFiles(peekable))
-  };
-}
-
-exports.multipartRequest = multipartRequest;
-
-
-/***/ }),
-
-/***/ 4388:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var errCode = __nccwpck_require__(2997);
-var cid = __nccwpck_require__(6447);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
-
-async function* normaliseInput(input) {
-  if (input === null || input === undefined) {
-    throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
-  }
-  const cid$1 = cid.CID.asCID(input);
-  if (cid$1) {
-    yield toPin({ cid: cid$1 });
-    return;
-  }
-  if (input instanceof String || typeof input === 'string') {
-    yield toPin({ path: input });
-    return;
-  }
-  if (input.cid != null || input.path != null) {
-    return yield toPin(input);
-  }
-  if (Symbol.iterator in input) {
-    const iterator = input[Symbol.iterator]();
-    const first = iterator.next();
-    if (first.done)
-      return iterator;
-    if (cid.CID.asCID(first.value) || first.value instanceof String || typeof first.value === 'string') {
-      yield toPin({ cid: first.value });
-      for (const cid of iterator) {
-        yield toPin({ cid });
-      }
-      return;
-    }
-    if (first.value.cid != null || first.value.path != null) {
-      yield toPin(first.value);
-      for (const obj of iterator) {
-        yield toPin(obj);
-      }
-      return;
-    }
-    throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
-  }
-  if (Symbol.asyncIterator in input) {
-    const iterator = input[Symbol.asyncIterator]();
-    const first = await iterator.next();
-    if (first.done)
-      return iterator;
-    if (cid.CID.asCID(first.value) || first.value instanceof String || typeof first.value === 'string') {
-      yield toPin({ cid: first.value });
-      for await (const cid of iterator) {
-        yield toPin({ cid });
-      }
-      return;
-    }
-    if (first.value.cid != null || first.value.path != null) {
-      yield toPin(first.value);
-      for await (const obj of iterator) {
-        yield toPin(obj);
-      }
-      return;
-    }
-    throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
-  }
-  throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
-}
-function toPin(input) {
-  const path = input.cid || `${ input.path }`;
-  if (!path) {
-    throw errCode__default["default"](new Error('Unexpected input: Please path either a CID or an IPFS path'), 'ERR_UNEXPECTED_INPUT');
-  }
-  const pin = {
-    path,
-    recursive: input.recursive !== false
-  };
-  if (input.metadata != null) {
-    pin.metadata = input.metadata;
-  }
-  return pin;
-}
-
-exports.normaliseInput = normaliseInput;
-
-
-/***/ }),
-
-/***/ 6822:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var multiaddr = __nccwpck_require__(5858);
-var multiAddrToUri = __nccwpck_require__(2849);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var multiAddrToUri__default = /*#__PURE__*/_interopDefaultLegacy(multiAddrToUri);
-
-function toUrlString(url) {
-  try {
-    url = multiAddrToUri__default["default"](new multiaddr.Multiaddr(url));
-  } catch (err) {
-  }
-  url = url.toString();
-  return url;
-}
-
-exports.toUrlString = toUrlString;
-
-
-/***/ }),
-
 /***/ 5117:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -13581,7 +15937,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 var cid = __nccwpck_require__(6447);
 var objectToCamel = __nccwpck_require__(2574);
 var configure = __nccwpck_require__(2844);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
 
@@ -13674,7 +16030,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 var addAll = __nccwpck_require__(5117);
 var last = __nccwpck_require__(7123);
 var configure = __nccwpck_require__(2844);
-var normaliseInputSingle = __nccwpck_require__(4304);
+var normaliseInputSingle = __nccwpck_require__(7808);
 
 function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
 
@@ -13923,7 +16279,7 @@ exports.createBlock = createBlock;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var cid = __nccwpck_require__(6447);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
@@ -14485,7 +16841,7 @@ exports.createList = createList;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var fromString = __nccwpck_require__(3538);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
@@ -14661,7 +17017,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var cid = __nccwpck_require__(6447);
 
 const createImport = configure.configure(api => {
@@ -14737,7 +17093,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var cid = __nccwpck_require__(6447);
 var configure = __nccwpck_require__(2844);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
 
@@ -15104,7 +17460,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var abortSignal = __nccwpck_require__(861);
 var toString = __nccwpck_require__(8389);
 var mapEvent = __nccwpck_require__(8697);
@@ -15758,7 +18114,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 var modeToString = __nccwpck_require__(786);
 var parseMtime = __nccwpck_require__(687);
 var configure = __nccwpck_require__(2844);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
 
@@ -15902,9 +18258,9 @@ exports.createId = createId;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var multibases = __nccwpck_require__(3986);
-var multicodecs = __nccwpck_require__(5692);
-var multihashes = __nccwpck_require__(4877);
+var multibases = __nccwpck_require__(5219);
+var multicodecs = __nccwpck_require__(7852);
+var multihashes = __nccwpck_require__(7981);
 var dagPB = __nccwpck_require__(8012);
 var dagCBOR = __nccwpck_require__(6477);
 var dagJSON = __nccwpck_require__(6349);
@@ -16406,8 +18762,8 @@ var parseDuration = __nccwpck_require__(3805);
 var debug = __nccwpck_require__(8237);
 var HTTP = __nccwpck_require__(5529);
 var mergeOpts = __nccwpck_require__(2555);
-var toUrlString = __nccwpck_require__(6822);
-var getAgent = __nccwpck_require__(4866);
+var toUrlString = __nccwpck_require__(1522);
+var getAgent = __nccwpck_require__(4707);
 
 function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
 
@@ -17351,7 +19707,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var data = __nccwpck_require__(2933);
 var get = __nccwpck_require__(3632);
-var links = __nccwpck_require__(7852);
+var links = __nccwpck_require__(1220);
 var _new = __nccwpck_require__(1062);
 var put = __nccwpck_require__(5107);
 var stat = __nccwpck_require__(9212);
@@ -17374,7 +19730,7 @@ exports.createObject = createObject;
 
 /***/ }),
 
-/***/ 7852:
+/***/ 1220:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -17490,7 +19846,7 @@ exports.createAddLink = createAddLink;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var cid = __nccwpck_require__(6447);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
@@ -17590,7 +19946,7 @@ exports.createRmLink = createRmLink;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var cid = __nccwpck_require__(6447);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
 var abortSignal = __nccwpck_require__(861);
@@ -17696,7 +20052,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var cid = __nccwpck_require__(6447);
 var configure = __nccwpck_require__(2844);
-var normaliseInput = __nccwpck_require__(4388);
+var normaliseInput = __nccwpck_require__(9133);
 var toUrlSearchParams = __nccwpck_require__(3510);
 
 const createAddAll = configure.configure(api => {
@@ -18263,7 +20619,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var cid = __nccwpck_require__(6447);
 var configure = __nccwpck_require__(2844);
-var normaliseInput = __nccwpck_require__(4388);
+var normaliseInput = __nccwpck_require__(9133);
 var toUrlSearchParams = __nccwpck_require__(3510);
 
 const createRmAll = configure.configure(api => {
@@ -18469,7 +20825,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var configure = __nccwpck_require__(2844);
 var toUrlSearchParams = __nccwpck_require__(3510);
-var multipartRequest = __nccwpck_require__(2099);
+var multipartRequest = __nccwpck_require__(2459);
 var abortSignal = __nccwpck_require__(861);
 var httpRpcWireFormat = __nccwpck_require__(2210);
 
@@ -19222,6 +21578,2145 @@ const createVersion = configure.configure(api => {
 });
 
 exports.createVersion = createVersion;
+
+
+/***/ }),
+
+/***/ 4707:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var http = __nccwpck_require__(3685);
+var https = __nccwpck_require__(5687);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var http__default = /*#__PURE__*/_interopDefaultLegacy(http);
+var https__default = /*#__PURE__*/_interopDefaultLegacy(https);
+
+var agent = url => {
+  if (!url) {
+    throw new Error('URL required');
+  }
+  return url.protocol.startsWith('https') ? https__default["default"].Agent : http__default["default"].Agent;
+};
+
+module.exports = agent;
+
+
+/***/ }),
+
+/***/ 7841:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errCode = __nccwpck_require__(2997);
+var browserStreamToIt = __nccwpck_require__(664);
+var itPeekable = __nccwpck_require__(2276);
+var map = __nccwpck_require__(8753);
+var utils = __nccwpck_require__(127);
+var ipfsUnixfs = __nccwpck_require__(4103);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+var browserStreamToIt__default = /*#__PURE__*/_interopDefaultLegacy(browserStreamToIt);
+var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
+var map__default = /*#__PURE__*/_interopDefaultLegacy(map);
+
+async function* normaliseCandidateMultiple(input, normaliseContent) {
+  if (typeof input === 'string' || input instanceof String || utils.isBytes(input) || utils.isBlob(input) || input._readableState) {
+    throw errCode__default["default"](new Error('Unexpected input: single item passed - if you are using ipfs.addAll, please use ipfs.add instead'), 'ERR_UNEXPECTED_INPUT');
+  }
+  if (utils.isReadableStream(input)) {
+    input = browserStreamToIt__default["default"](input);
+  }
+  if (Symbol.iterator in input || Symbol.asyncIterator in input) {
+    const peekable = itPeekable__default["default"](input);
+    const {value, done} = await peekable.peek();
+    if (done) {
+      yield* [];
+      return;
+    }
+    peekable.push(value);
+    if (Number.isInteger(value)) {
+      throw errCode__default["default"](new Error('Unexpected input: single item passed - if you are using ipfs.addAll, please use ipfs.add instead'), 'ERR_UNEXPECTED_INPUT');
+    }
+    if (value._readableState) {
+      yield* map__default["default"](peekable, value => toFileObject({ content: value }, normaliseContent));
+      return;
+    }
+    if (utils.isBytes(value)) {
+      yield toFileObject({ content: peekable }, normaliseContent);
+      return;
+    }
+    if (utils.isFileObject(value) || value[Symbol.iterator] || value[Symbol.asyncIterator] || utils.isReadableStream(value) || utils.isBlob(value)) {
+      yield* map__default["default"](peekable, value => toFileObject(value, normaliseContent));
+      return;
+    }
+  }
+  if (utils.isFileObject(input)) {
+    throw errCode__default["default"](new Error('Unexpected input: single item passed - if you are using ipfs.addAll, please use ipfs.add instead'), 'ERR_UNEXPECTED_INPUT');
+  }
+  throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
+}
+async function toFileObject(input, normaliseContent) {
+  const {path, mode, mtime, content} = input;
+  const file = {
+    path: path || '',
+    mode: ipfsUnixfs.parseMode(mode),
+    mtime: ipfsUnixfs.parseMtime(mtime)
+  };
+  if (content) {
+    file.content = await normaliseContent(content);
+  } else if (!path) {
+    file.content = await normaliseContent(input);
+  }
+  return file;
+}
+
+exports.normaliseCandidateMultiple = normaliseCandidateMultiple;
+
+
+/***/ }),
+
+/***/ 5399:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errCode = __nccwpck_require__(2997);
+var browserStreamToIt = __nccwpck_require__(664);
+var itPeekable = __nccwpck_require__(2276);
+var utils = __nccwpck_require__(127);
+var ipfsUnixfs = __nccwpck_require__(4103);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+var browserStreamToIt__default = /*#__PURE__*/_interopDefaultLegacy(browserStreamToIt);
+var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
+
+async function* normaliseCandidateSingle(input, normaliseContent) {
+  if (input === null || input === undefined) {
+    throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
+  }
+  if (typeof input === 'string' || input instanceof String) {
+    yield toFileObject(input.toString(), normaliseContent);
+    return;
+  }
+  if (utils.isBytes(input) || utils.isBlob(input)) {
+    yield toFileObject(input, normaliseContent);
+    return;
+  }
+  if (utils.isReadableStream(input)) {
+    input = browserStreamToIt__default["default"](input);
+  }
+  if (Symbol.iterator in input || Symbol.asyncIterator in input) {
+    const peekable = itPeekable__default["default"](input);
+    const {value, done} = await peekable.peek();
+    if (done) {
+      yield { content: [] };
+      return;
+    }
+    peekable.push(value);
+    if (Number.isInteger(value) || utils.isBytes(value) || typeof value === 'string' || value instanceof String) {
+      yield toFileObject(peekable, normaliseContent);
+      return;
+    }
+    throw errCode__default["default"](new Error('Unexpected input: multiple items passed - if you are using ipfs.add, please use ipfs.addAll instead'), 'ERR_UNEXPECTED_INPUT');
+  }
+  if (utils.isFileObject(input)) {
+    yield toFileObject(input, normaliseContent);
+    return;
+  }
+  throw errCode__default["default"](new Error('Unexpected input: cannot convert "' + typeof input + '" into ImportCandidate'), 'ERR_UNEXPECTED_INPUT');
+}
+async function toFileObject(input, normaliseContent) {
+  const {path, mode, mtime, content} = input;
+  const file = {
+    path: path || '',
+    mode: ipfsUnixfs.parseMode(mode),
+    mtime: ipfsUnixfs.parseMtime(mtime)
+  };
+  if (content) {
+    file.content = await normaliseContent(content);
+  } else if (!path) {
+    file.content = await normaliseContent(input);
+  }
+  return file;
+}
+
+exports.normaliseCandidateSingle = normaliseCandidateSingle;
+
+
+/***/ }),
+
+/***/ 1724:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errCode = __nccwpck_require__(2997);
+var itPeekable = __nccwpck_require__(2276);
+var browserStreamToIt = __nccwpck_require__(664);
+var all = __nccwpck_require__(5810);
+var utils = __nccwpck_require__(127);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
+var browserStreamToIt__default = /*#__PURE__*/_interopDefaultLegacy(browserStreamToIt);
+var all__default = /*#__PURE__*/_interopDefaultLegacy(all);
+
+async function normaliseContent(input) {
+  if (utils.isBytes(input)) {
+    return new Blob([input]);
+  }
+  if (typeof input === 'string' || input instanceof String) {
+    return new Blob([input.toString()]);
+  }
+  if (utils.isBlob(input)) {
+    return input;
+  }
+  if (utils.isReadableStream(input)) {
+    input = browserStreamToIt__default["default"](input);
+  }
+  if (Symbol.iterator in input || Symbol.asyncIterator in input) {
+    const peekable = itPeekable__default["default"](input);
+    const {value, done} = await peekable.peek();
+    if (done) {
+      return itToBlob(peekable);
+    }
+    peekable.push(value);
+    if (Number.isInteger(value)) {
+      return new Blob([Uint8Array.from(await all__default["default"](peekable))]);
+    }
+    if (utils.isBytes(value) || typeof value === 'string' || value instanceof String) {
+      return itToBlob(peekable);
+    }
+  }
+  throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
+}
+async function itToBlob(stream) {
+  const parts = [];
+  for await (const chunk of stream) {
+    parts.push(chunk);
+  }
+  return new Blob(parts);
+}
+
+exports.normaliseContent = normaliseContent;
+
+
+/***/ }),
+
+/***/ 4034:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errCode = __nccwpck_require__(2997);
+var fromString = __nccwpck_require__(3538);
+var browserStreamToIt = __nccwpck_require__(664);
+var blobToIt = __nccwpck_require__(7842);
+var itPeekable = __nccwpck_require__(2276);
+var all = __nccwpck_require__(5810);
+var map = __nccwpck_require__(8753);
+var utils = __nccwpck_require__(127);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+var browserStreamToIt__default = /*#__PURE__*/_interopDefaultLegacy(browserStreamToIt);
+var blobToIt__default = /*#__PURE__*/_interopDefaultLegacy(blobToIt);
+var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
+var all__default = /*#__PURE__*/_interopDefaultLegacy(all);
+var map__default = /*#__PURE__*/_interopDefaultLegacy(map);
+
+async function* toAsyncIterable(thing) {
+  yield thing;
+}
+async function normaliseContent(input) {
+  if (utils.isBytes(input)) {
+    return toAsyncIterable(toBytes(input));
+  }
+  if (typeof input === 'string' || input instanceof String) {
+    return toAsyncIterable(toBytes(input.toString()));
+  }
+  if (utils.isBlob(input)) {
+    return blobToIt__default["default"](input);
+  }
+  if (utils.isReadableStream(input)) {
+    input = browserStreamToIt__default["default"](input);
+  }
+  if (Symbol.iterator in input || Symbol.asyncIterator in input) {
+    const peekable = itPeekable__default["default"](input);
+    const {value, done} = await peekable.peek();
+    if (done) {
+      return toAsyncIterable(new Uint8Array(0));
+    }
+    peekable.push(value);
+    if (Number.isInteger(value)) {
+      return toAsyncIterable(Uint8Array.from(await all__default["default"](peekable)));
+    }
+    if (utils.isBytes(value) || typeof value === 'string' || value instanceof String) {
+      return map__default["default"](peekable, toBytes);
+    }
+  }
+  throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
+}
+function toBytes(chunk) {
+  if (chunk instanceof Uint8Array) {
+    return chunk;
+  }
+  if (ArrayBuffer.isView(chunk)) {
+    return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  }
+  if (chunk instanceof ArrayBuffer) {
+    return new Uint8Array(chunk);
+  }
+  if (Array.isArray(chunk)) {
+    return Uint8Array.from(chunk);
+  }
+  return fromString.fromString(chunk.toString());
+}
+
+exports.normaliseContent = normaliseContent;
+
+
+/***/ }),
+
+/***/ 1110:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var normaliseContent_browser = __nccwpck_require__(1724);
+var normaliseCandidateMultiple = __nccwpck_require__(7841);
+
+function normaliseInput(input) {
+  return normaliseCandidateMultiple.normaliseCandidateMultiple(input, normaliseContent_browser.normaliseContent, true);
+}
+
+exports.normaliseInput = normaliseInput;
+
+
+/***/ }),
+
+/***/ 9746:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var normaliseContent = __nccwpck_require__(4034);
+var normaliseCandidateMultiple = __nccwpck_require__(7841);
+
+function normaliseInput(input) {
+  return normaliseCandidateMultiple.normaliseCandidateMultiple(input, normaliseContent.normaliseContent);
+}
+
+exports.normaliseInput = normaliseInput;
+
+
+/***/ }),
+
+/***/ 7808:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var normaliseContent = __nccwpck_require__(4034);
+var normaliseCandidateSingle = __nccwpck_require__(5399);
+
+function normaliseInput(input) {
+  return normaliseCandidateSingle.normaliseCandidateSingle(input, normaliseContent.normaliseContent);
+}
+
+exports.normaliseInput = normaliseInput;
+
+
+/***/ }),
+
+/***/ 127:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+function isBytes(obj) {
+  return ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer;
+}
+function isBlob(obj) {
+  return obj.constructor && (obj.constructor.name === 'Blob' || obj.constructor.name === 'File') && typeof obj.stream === 'function';
+}
+function isFileObject(obj) {
+  return typeof obj === 'object' && (obj.path || obj.content);
+}
+const isReadableStream = value => value && typeof value.getReader === 'function';
+
+exports.isBlob = isBlob;
+exports.isBytes = isBytes;
+exports.isFileObject = isFileObject;
+exports.isReadableStream = isReadableStream;
+
+
+/***/ }),
+
+/***/ 8790:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+function modeToString(mode) {
+  if (mode == null) {
+    return undefined;
+  }
+  if (typeof mode === 'string') {
+    return mode;
+  }
+  return mode.toString(8).padStart(4, '0');
+}
+
+exports.modeToString = modeToString;
+
+
+/***/ }),
+
+/***/ 5219:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+const LOAD_BASE = name => Promise.reject(new Error(`No base found for "${ name }"`));
+class Multibases {
+  constructor(options) {
+    this._basesByName = {};
+    this._basesByPrefix = {};
+    this._loadBase = options.loadBase || LOAD_BASE;
+    for (const base of options.bases) {
+      this.addBase(base);
+    }
+  }
+  addBase(base) {
+    if (this._basesByName[base.name] || this._basesByPrefix[base.prefix]) {
+      throw new Error(`Codec already exists for codec "${ base.name }"`);
+    }
+    this._basesByName[base.name] = base;
+    this._basesByPrefix[base.prefix] = base;
+  }
+  removeBase(base) {
+    delete this._basesByName[base.name];
+    delete this._basesByPrefix[base.prefix];
+  }
+  async getBase(nameOrPrefix) {
+    if (this._basesByName[nameOrPrefix]) {
+      return this._basesByName[nameOrPrefix];
+    }
+    if (this._basesByPrefix[nameOrPrefix]) {
+      return this._basesByPrefix[nameOrPrefix];
+    }
+    const base = await this._loadBase(nameOrPrefix);
+    if (this._basesByName[base.name] == null && this._basesByPrefix[base.prefix] == null) {
+      this.addBase(base);
+    }
+    return base;
+  }
+  listBases() {
+    return Object.values(this._basesByName);
+  }
+}
+
+exports.Multibases = Multibases;
+
+
+/***/ }),
+
+/***/ 7852:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+const LOAD_CODEC = codeOrName => Promise.reject(new Error(`No codec found for "${ codeOrName }"`));
+class Multicodecs {
+  constructor(options) {
+    this._codecsByName = {};
+    this._codecsByCode = {};
+    this._loadCodec = options.loadCodec || LOAD_CODEC;
+    for (const codec of options.codecs) {
+      this.addCodec(codec);
+    }
+  }
+  addCodec(codec) {
+    if (this._codecsByName[codec.name] || this._codecsByCode[codec.code]) {
+      throw new Error(`Resolver already exists for codec "${ codec.name }"`);
+    }
+    this._codecsByName[codec.name] = codec;
+    this._codecsByCode[codec.code] = codec;
+  }
+  removeCodec(codec) {
+    delete this._codecsByName[codec.name];
+    delete this._codecsByCode[codec.code];
+  }
+  async getCodec(code) {
+    const table = typeof code === 'string' ? this._codecsByName : this._codecsByCode;
+    if (table[code]) {
+      return table[code];
+    }
+    const codec = await this._loadCodec(code);
+    if (table[code] == null) {
+      this.addCodec(codec);
+    }
+    return codec;
+  }
+  listCodecs() {
+    return Object.values(this._codecsByName);
+  }
+}
+
+exports.Multicodecs = Multicodecs;
+
+
+/***/ }),
+
+/***/ 7981:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+const LOAD_HASHER = codeOrName => Promise.reject(new Error(`No hasher found for "${ codeOrName }"`));
+class Multihashes {
+  constructor(options) {
+    this._hashersByName = {};
+    this._hashersByCode = {};
+    this._loadHasher = options.loadHasher || LOAD_HASHER;
+    for (const hasher of options.hashers) {
+      this.addHasher(hasher);
+    }
+  }
+  addHasher(hasher) {
+    if (this._hashersByName[hasher.name] || this._hashersByCode[hasher.code]) {
+      throw new Error(`Resolver already exists for codec "${ hasher.name }"`);
+    }
+    this._hashersByName[hasher.name] = hasher;
+    this._hashersByCode[hasher.code] = hasher;
+  }
+  removeHasher(hasher) {
+    delete this._hashersByName[hasher.name];
+    delete this._hashersByCode[hasher.code];
+  }
+  async getHasher(code) {
+    const table = typeof code === 'string' ? this._hashersByName : this._hashersByCode;
+    if (table[code]) {
+      return table[code];
+    }
+    const hasher = await this._loadHasher(code);
+    if (table[code] == null) {
+      this.addHasher(hasher);
+    }
+    return hasher;
+  }
+  listHashers() {
+    return Object.values(this._hashersByName);
+  }
+}
+
+exports.Multihashes = Multihashes;
+
+
+/***/ }),
+
+/***/ 4765:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var normaliseInputMultiple_browser = __nccwpck_require__(1110);
+var modeToString = __nccwpck_require__(8790);
+
+async function multipartRequest(source, abortController, headers = {}) {
+  const parts = [];
+  const formData = new FormData();
+  let index = 0;
+  let total = 0;
+  for await (const {content, path, mode, mtime} of normaliseInputMultiple_browser.normaliseInput(source)) {
+    let fileSuffix = '';
+    const type = content ? 'file' : 'dir';
+    if (index > 0) {
+      fileSuffix = `-${ index }`;
+    }
+    let fieldName = type + fileSuffix;
+    const qs = [];
+    if (mode !== null && mode !== undefined) {
+      qs.push(`mode=${ modeToString.modeToString(mode) }`);
+    }
+    if (mtime != null) {
+      const {secs, nsecs} = mtime;
+      qs.push(`mtime=${ secs }`);
+      if (nsecs != null) {
+        qs.push(`mtime-nsecs=${ nsecs }`);
+      }
+    }
+    if (qs.length) {
+      fieldName = `${ fieldName }?${ qs.join('&') }`;
+    }
+    if (content) {
+      formData.set(fieldName, content, path != null ? encodeURIComponent(path) : undefined);
+      const end = total + content.size;
+      parts.push({
+        name: path,
+        start: total,
+        end
+      });
+      total = end;
+    } else if (path != null) {
+      formData.set(fieldName, new File([''], encodeURIComponent(path), { type: 'application/x-directory' }));
+    } else {
+      throw new Error('path or content or both must be set');
+    }
+    index++;
+  }
+  return {
+    total,
+    parts,
+    headers,
+    body: formData
+  };
+}
+
+exports.multipartRequest = multipartRequest;
+
+
+/***/ }),
+
+/***/ 2459:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var env_js = __nccwpck_require__(8804);
+var multipartRequest_node = __nccwpck_require__(824);
+var multipartRequest_browser = __nccwpck_require__(4765);
+var nanoid = __nccwpck_require__(7592);
+
+async function multipartRequest(source, abortController, headers = {}, boundary = `-----------------------------${ nanoid.nanoid() }`) {
+  let req = multipartRequest_node.multipartRequest;
+  if (env_js.isElectronRenderer) {
+    req = multipartRequest_browser.multipartRequest;
+  }
+  return req(source, abortController, headers, boundary);
+}
+
+exports.multipartRequest = multipartRequest;
+
+
+/***/ }),
+
+/***/ 824:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var normaliseInputMultiple = __nccwpck_require__(9746);
+var nanoid = __nccwpck_require__(7592);
+var modeToString = __nccwpck_require__(8790);
+var mergeOpts = __nccwpck_require__(2555);
+var toStream = __nccwpck_require__(3259);
+var debug = __nccwpck_require__(8237);
+var itPeekable = __nccwpck_require__(2276);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var mergeOpts__default = /*#__PURE__*/_interopDefaultLegacy(mergeOpts);
+var toStream__default = /*#__PURE__*/_interopDefaultLegacy(toStream);
+var debug__default = /*#__PURE__*/_interopDefaultLegacy(debug);
+var itPeekable__default = /*#__PURE__*/_interopDefaultLegacy(itPeekable);
+
+const merge = mergeOpts__default["default"].bind({ ignoreUndefined: true });
+const log = debug__default["default"]('ipfs:core-utils:multipart-request');
+async function multipartRequest(source, abortController, headers = {}, boundary = `-----------------------------${ nanoid.nanoid() }`) {
+  async function* streamFiles(source) {
+    try {
+      let index = 0;
+      for await (const {content, path, mode, mtime} of source) {
+        let fileSuffix = '';
+        const type = content ? 'file' : 'dir';
+        if (index > 0) {
+          yield '\r\n';
+          fileSuffix = `-${ index }`;
+        }
+        let fieldName = type + fileSuffix;
+        const qs = [];
+        if (mode !== null && mode !== undefined) {
+          qs.push(`mode=${ modeToString.modeToString(mode) }`);
+        }
+        if (mtime != null) {
+          const {secs, nsecs} = mtime;
+          qs.push(`mtime=${ secs }`);
+          if (nsecs != null) {
+            qs.push(`mtime-nsecs=${ nsecs }`);
+          }
+        }
+        if (qs.length) {
+          fieldName = `${ fieldName }?${ qs.join('&') }`;
+        }
+        yield `--${ boundary }\r\n`;
+        yield `Content-Disposition: form-data; name="${ fieldName }"; filename="${ encodeURIComponent(path || '') }"\r\n`;
+        yield `Content-Type: ${ content ? 'application/octet-stream' : 'application/x-directory' }\r\n`;
+        yield '\r\n';
+        if (content) {
+          yield* content;
+        }
+        index++;
+      }
+    } catch (err) {
+      log(err);
+      abortController.abort();
+    } finally {
+      yield `\r\n--${ boundary }--\r\n`;
+    }
+  }
+  const peekable = itPeekable__default["default"](normaliseInputMultiple.normaliseInput(source));
+  const {value, done} = await peekable.peek();
+  if (!done) {
+    peekable.push(value);
+  }
+  return {
+    parts: null,
+    total: -1,
+    headers: merge(headers, { 'Content-Type': `multipart/form-data; boundary=${ boundary }` }),
+    body: toStream__default["default"](streamFiles(peekable))
+  };
+}
+
+exports.multipartRequest = multipartRequest;
+
+
+/***/ }),
+
+/***/ 9133:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var errCode = __nccwpck_require__(2997);
+var cid = __nccwpck_require__(6447);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+
+async function* normaliseInput(input) {
+  if (input === null || input === undefined) {
+    throw errCode__default["default"](new Error(`Unexpected input: ${ input }`), 'ERR_UNEXPECTED_INPUT');
+  }
+  const cid$1 = cid.CID.asCID(input);
+  if (cid$1) {
+    yield toPin({ cid: cid$1 });
+    return;
+  }
+  if (input instanceof String || typeof input === 'string') {
+    yield toPin({ path: input });
+    return;
+  }
+  if (input.cid != null || input.path != null) {
+    return yield toPin(input);
+  }
+  if (Symbol.iterator in input) {
+    const iterator = input[Symbol.iterator]();
+    const first = iterator.next();
+    if (first.done)
+      return iterator;
+    if (cid.CID.asCID(first.value) || first.value instanceof String || typeof first.value === 'string') {
+      yield toPin({ cid: first.value });
+      for (const cid of iterator) {
+        yield toPin({ cid });
+      }
+      return;
+    }
+    if (first.value.cid != null || first.value.path != null) {
+      yield toPin(first.value);
+      for (const obj of iterator) {
+        yield toPin(obj);
+      }
+      return;
+    }
+    throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
+  }
+  if (Symbol.asyncIterator in input) {
+    const iterator = input[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    if (first.done)
+      return iterator;
+    if (cid.CID.asCID(first.value) || first.value instanceof String || typeof first.value === 'string') {
+      yield toPin({ cid: first.value });
+      for await (const cid of iterator) {
+        yield toPin({ cid });
+      }
+      return;
+    }
+    if (first.value.cid != null || first.value.path != null) {
+      yield toPin(first.value);
+      for await (const obj of iterator) {
+        yield toPin(obj);
+      }
+      return;
+    }
+    throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
+  }
+  throw errCode__default["default"](new Error('Unexpected input: ' + typeof input), 'ERR_UNEXPECTED_INPUT');
+}
+function toPin(input) {
+  const path = input.cid || `${ input.path }`;
+  if (!path) {
+    throw errCode__default["default"](new Error('Unexpected input: Please path either a CID or an IPFS path'), 'ERR_UNEXPECTED_INPUT');
+  }
+  const pin = {
+    path,
+    recursive: input.recursive !== false
+  };
+  if (input.metadata != null) {
+    pin.metadata = input.metadata;
+  }
+  return pin;
+}
+
+exports.normaliseInput = normaliseInput;
+
+
+/***/ }),
+
+/***/ 1522:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var multiaddr = __nccwpck_require__(5858);
+var multiAddrToUri = __nccwpck_require__(2849);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var multiAddrToUri__default = /*#__PURE__*/_interopDefaultLegacy(multiAddrToUri);
+
+function toUrlString(url) {
+  try {
+    url = multiAddrToUri__default["default"](new multiaddr.Multiaddr(url));
+  } catch (err) {
+  }
+  url = url.toString();
+  return url;
+}
+
+exports.toUrlString = toUrlString;
+
+
+/***/ }),
+
+/***/ 8452:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var BufferList = __nccwpck_require__(3664);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var BufferList__default = /*#__PURE__*/_interopDefaultLegacy(BufferList);
+
+async function* fixedSizeChunker(source, options) {
+  let bl = new BufferList__default["default"]();
+  let currentLength = 0;
+  let emitted = false;
+  const maxChunkSize = options.maxChunkSize;
+  for await (const buffer of source) {
+    bl.append(buffer);
+    currentLength += buffer.length;
+    while (currentLength >= maxChunkSize) {
+      yield bl.slice(0, maxChunkSize);
+      emitted = true;
+      if (maxChunkSize === bl.length) {
+        bl = new BufferList__default["default"]();
+        currentLength = 0;
+      } else {
+        const newBl = new BufferList__default["default"]();
+        newBl.append(bl.shallowSlice(maxChunkSize));
+        bl = newBl;
+        currentLength -= maxChunkSize;
+      }
+    }
+  }
+  if (!emitted || currentLength) {
+    yield bl.slice(0, currentLength);
+  }
+}
+
+module.exports = fixedSizeChunker;
+
+
+/***/ }),
+
+/***/ 7290:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var BufferList = __nccwpck_require__(3664);
+var rabinWasm = __nccwpck_require__(1715);
+var errCode = __nccwpck_require__(2997);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var BufferList__default = /*#__PURE__*/_interopDefaultLegacy(BufferList);
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+
+async function* rabinChunker(source, options) {
+  let min, max, avg;
+  if (options.minChunkSize && options.maxChunkSize && options.avgChunkSize) {
+    avg = options.avgChunkSize;
+    min = options.minChunkSize;
+    max = options.maxChunkSize;
+  } else if (!options.avgChunkSize) {
+    throw errCode__default["default"](new Error('please specify an average chunk size'), 'ERR_INVALID_AVG_CHUNK_SIZE');
+  } else {
+    avg = options.avgChunkSize;
+    min = avg / 3;
+    max = avg + avg / 2;
+  }
+  if (min < 16) {
+    throw errCode__default["default"](new Error('rabin min must be greater than 16'), 'ERR_INVALID_MIN_CHUNK_SIZE');
+  }
+  if (max < min) {
+    max = min;
+  }
+  if (avg < min) {
+    avg = min;
+  }
+  const sizepow = Math.floor(Math.log2(avg));
+  for await (const chunk of rabin(source, {
+      min: min,
+      max: max,
+      bits: sizepow,
+      window: options.window,
+      polynomial: options.polynomial
+    })) {
+    yield chunk;
+  }
+}
+async function* rabin(source, options) {
+  const r = await rabinWasm.create(options.bits, options.min, options.max, options.window);
+  const buffers = new BufferList__default["default"]();
+  for await (const chunk of source) {
+    buffers.append(chunk);
+    const sizes = r.fingerprint(chunk);
+    for (let i = 0; i < sizes.length; i++) {
+      const size = sizes[i];
+      const buf = buffers.slice(0, size);
+      buffers.consume(size);
+      yield buf;
+    }
+  }
+  if (buffers.length) {
+    yield buffers.slice(0);
+  }
+}
+
+module.exports = rabinChunker;
+
+
+/***/ }),
+
+/***/ 7830:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var ipfsUnixfs = __nccwpck_require__(4103);
+var persist = __nccwpck_require__(8095);
+var dagPb = __nccwpck_require__(8012);
+
+const dirBuilder = async (item, blockstore, options) => {
+  const unixfs = new ipfsUnixfs.UnixFS({
+    type: 'directory',
+    mtime: item.mtime,
+    mode: item.mode
+  });
+  const buffer = dagPb.encode(dagPb.prepare({ Data: unixfs.marshal() }));
+  const cid = await persist(buffer, blockstore, options);
+  const path = item.path;
+  return {
+    cid,
+    path,
+    unixfs,
+    size: buffer.length
+  };
+};
+
+module.exports = dirBuilder;
+
+
+/***/ }),
+
+/***/ 9601:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var batch = __nccwpck_require__(3454);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var batch__default = /*#__PURE__*/_interopDefaultLegacy(batch);
+
+function balanced(source, reduce, options) {
+  return reduceToParents(source, reduce, options);
+}
+async function reduceToParents(source, reduce, options) {
+  const roots = [];
+  for await (const chunked of batch__default["default"](source, options.maxChildrenPerNode)) {
+    roots.push(await reduce(chunked));
+  }
+  if (roots.length > 1) {
+    return reduceToParents(roots, reduce, options);
+  }
+  return roots[0];
+}
+
+module.exports = balanced;
+
+
+/***/ }),
+
+/***/ 532:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var ipfsUnixfs = __nccwpck_require__(4103);
+var persist = __nccwpck_require__(8095);
+var dagPb = __nccwpck_require__(8012);
+var rawCodec = __nccwpck_require__(2048);
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var dagPb__namespace = /*#__PURE__*/_interopNamespace(dagPb);
+var rawCodec__namespace = /*#__PURE__*/_interopNamespace(rawCodec);
+
+async function* bufferImporter(file, block, options) {
+  for await (let buffer of file.content) {
+    yield async () => {
+      options.progress(buffer.length, file.path);
+      let unixfs;
+      const opts = {
+        codec: dagPb__namespace,
+        cidVersion: options.cidVersion,
+        hasher: options.hasher,
+        onlyHash: options.onlyHash
+      };
+      if (options.rawLeaves) {
+        opts.codec = rawCodec__namespace;
+        opts.cidVersion = 1;
+      } else {
+        unixfs = new ipfsUnixfs.UnixFS({
+          type: options.leafType,
+          data: buffer
+        });
+        buffer = dagPb__namespace.encode({
+          Data: unixfs.marshal(),
+          Links: []
+        });
+      }
+      return {
+        cid: await persist(buffer, block, opts),
+        unixfs,
+        size: buffer.length
+      };
+    };
+  }
+}
+
+module.exports = bufferImporter;
+
+
+/***/ }),
+
+/***/ 1016:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var all = __nccwpck_require__(5810);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var all__default = /*#__PURE__*/_interopDefaultLegacy(all);
+
+async function flat(source, reduce) {
+  return reduce(await all__default["default"](source));
+}
+
+module.exports = flat;
+
+
+/***/ }),
+
+/***/ 6234:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var errCode = __nccwpck_require__(2997);
+var ipfsUnixfs = __nccwpck_require__(4103);
+var persist = __nccwpck_require__(8095);
+var dagPb = __nccwpck_require__(8012);
+var parallelBatch = __nccwpck_require__(6615);
+var rawCodec = __nccwpck_require__(2048);
+var flat = __nccwpck_require__(1016);
+var balanced = __nccwpck_require__(9601);
+var trickle = __nccwpck_require__(4889);
+var bufferImporter = __nccwpck_require__(532);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+var dagPb__namespace = /*#__PURE__*/_interopNamespace(dagPb);
+var parallelBatch__default = /*#__PURE__*/_interopDefaultLegacy(parallelBatch);
+var rawCodec__namespace = /*#__PURE__*/_interopNamespace(rawCodec);
+
+const dagBuilders = {
+  flat: flat,
+  balanced: balanced,
+  trickle: trickle
+};
+async function* buildFileBatch(file, blockstore, options) {
+  let count = -1;
+  let previous;
+  let bufferImporter$1;
+  if (typeof options.bufferImporter === 'function') {
+    bufferImporter$1 = options.bufferImporter;
+  } else {
+    bufferImporter$1 = bufferImporter;
+  }
+  for await (const entry of parallelBatch__default["default"](bufferImporter$1(file, blockstore, options), options.blockWriteConcurrency)) {
+    count++;
+    if (count === 0) {
+      previous = entry;
+      continue;
+    } else if (count === 1 && previous) {
+      yield previous;
+      previous = null;
+    }
+    yield entry;
+  }
+  if (previous) {
+    previous.single = true;
+    yield previous;
+  }
+}
+const reduce = (file, blockstore, options) => {
+  async function reducer(leaves) {
+    if (leaves.length === 1 && leaves[0].single && options.reduceSingleLeafToSelf) {
+      const leaf = leaves[0];
+      if (file.mtime !== undefined || file.mode !== undefined) {
+        let buffer = await blockstore.get(leaf.cid);
+        leaf.unixfs = new ipfsUnixfs.UnixFS({
+          type: 'file',
+          mtime: file.mtime,
+          mode: file.mode,
+          data: buffer
+        });
+        buffer = dagPb.encode(dagPb.prepare({ Data: leaf.unixfs.marshal() }));
+        leaf.cid = await persist(buffer, blockstore, {
+          ...options,
+          codec: dagPb__namespace,
+          hasher: options.hasher,
+          cidVersion: options.cidVersion
+        });
+        leaf.size = buffer.length;
+      }
+      return {
+        cid: leaf.cid,
+        path: file.path,
+        unixfs: leaf.unixfs,
+        size: leaf.size
+      };
+    }
+    const f = new ipfsUnixfs.UnixFS({
+      type: 'file',
+      mtime: file.mtime,
+      mode: file.mode
+    });
+    const links = leaves.filter(leaf => {
+      if (leaf.cid.code === rawCodec__namespace.code && leaf.size) {
+        return true;
+      }
+      if (leaf.unixfs && !leaf.unixfs.data && leaf.unixfs.fileSize()) {
+        return true;
+      }
+      return Boolean(leaf.unixfs && leaf.unixfs.data && leaf.unixfs.data.length);
+    }).map(leaf => {
+      if (leaf.cid.code === rawCodec__namespace.code) {
+        f.addBlockSize(leaf.size);
+        return {
+          Name: '',
+          Tsize: leaf.size,
+          Hash: leaf.cid
+        };
+      }
+      if (!leaf.unixfs || !leaf.unixfs.data) {
+        f.addBlockSize(leaf.unixfs && leaf.unixfs.fileSize() || 0);
+      } else {
+        f.addBlockSize(leaf.unixfs.data.length);
+      }
+      return {
+        Name: '',
+        Tsize: leaf.size,
+        Hash: leaf.cid
+      };
+    });
+    const node = {
+      Data: f.marshal(),
+      Links: links
+    };
+    const buffer = dagPb.encode(dagPb.prepare(node));
+    const cid = await persist(buffer, blockstore, options);
+    return {
+      cid,
+      path: file.path,
+      unixfs: f,
+      size: buffer.length + node.Links.reduce((acc, curr) => acc + curr.Tsize, 0)
+    };
+  }
+  return reducer;
+};
+function fileBuilder(file, block, options) {
+  const dagBuilder = dagBuilders[options.strategy];
+  if (!dagBuilder) {
+    throw errCode__default["default"](new Error(`Unknown importer build strategy name: ${ options.strategy }`), 'ERR_BAD_STRATEGY');
+  }
+  return dagBuilder(buildFileBatch(file, block, options), reduce(file, block, options), options);
+}
+
+module.exports = fileBuilder;
+
+
+/***/ }),
+
+/***/ 4889:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var batch = __nccwpck_require__(3454);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var batch__default = /*#__PURE__*/_interopDefaultLegacy(batch);
+
+async function trickleStream(source, reduce, options) {
+  const root = new Root(options.layerRepeat);
+  let iteration = 0;
+  let maxDepth = 1;
+  let subTree = root;
+  for await (const layer of batch__default["default"](source, options.maxChildrenPerNode)) {
+    if (subTree.isFull()) {
+      if (subTree !== root) {
+        root.addChild(await subTree.reduce(reduce));
+      }
+      if (iteration && iteration % options.layerRepeat === 0) {
+        maxDepth++;
+      }
+      subTree = new SubTree(maxDepth, options.layerRepeat, iteration);
+      iteration++;
+    }
+    subTree.append(layer);
+  }
+  if (subTree && subTree !== root) {
+    root.addChild(await subTree.reduce(reduce));
+  }
+  return root.reduce(reduce);
+}
+class SubTree {
+  constructor(maxDepth, layerRepeat, iteration = 0) {
+    this.maxDepth = maxDepth;
+    this.layerRepeat = layerRepeat;
+    this.currentDepth = 1;
+    this.iteration = iteration;
+    this.root = this.node = this.parent = {
+      children: [],
+      depth: this.currentDepth,
+      maxDepth,
+      maxChildren: (this.maxDepth - this.currentDepth) * this.layerRepeat
+    };
+  }
+  isFull() {
+    if (!this.root.data) {
+      return false;
+    }
+    if (this.currentDepth < this.maxDepth && this.node.maxChildren) {
+      this._addNextNodeToParent(this.node);
+      return false;
+    }
+    const distantRelative = this._findParent(this.node, this.currentDepth);
+    if (distantRelative) {
+      this._addNextNodeToParent(distantRelative);
+      return false;
+    }
+    return true;
+  }
+  _addNextNodeToParent(parent) {
+    this.parent = parent;
+    const nextNode = {
+      children: [],
+      depth: parent.depth + 1,
+      parent,
+      maxDepth: this.maxDepth,
+      maxChildren: Math.floor(parent.children.length / this.layerRepeat) * this.layerRepeat
+    };
+    parent.children.push(nextNode);
+    this.currentDepth = nextNode.depth;
+    this.node = nextNode;
+  }
+  append(layer) {
+    this.node.data = layer;
+  }
+  reduce(reduce) {
+    return this._reduce(this.root, reduce);
+  }
+  async _reduce(node, reduce) {
+    let children = [];
+    if (node.children.length) {
+      children = await Promise.all(node.children.filter(child => child.data).map(child => this._reduce(child, reduce)));
+    }
+    return reduce((node.data || []).concat(children));
+  }
+  _findParent(node, depth) {
+    const parent = node.parent;
+    if (!parent || parent.depth === 0) {
+      return;
+    }
+    if (parent.children.length === parent.maxChildren || !parent.maxChildren) {
+      return this._findParent(parent, depth);
+    }
+    return parent;
+  }
+}
+class Root extends SubTree {
+  constructor(layerRepeat) {
+    super(0, layerRepeat);
+    this.root.depth = 0;
+    this.currentDepth = 1;
+  }
+  addChild(child) {
+    this.root.children.push(child);
+  }
+  reduce(reduce) {
+    return reduce((this.root.data || []).concat(this.root.children));
+  }
+}
+
+module.exports = trickleStream;
+
+
+/***/ }),
+
+/***/ 4390:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var dir = __nccwpck_require__(7830);
+var index = __nccwpck_require__(6234);
+var errCode = __nccwpck_require__(2997);
+var rabin = __nccwpck_require__(7290);
+var fixedSize = __nccwpck_require__(8452);
+var validateChunks = __nccwpck_require__(6628);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+
+function isIterable(thing) {
+  return Symbol.iterator in thing;
+}
+function isAsyncIterable(thing) {
+  return Symbol.asyncIterator in thing;
+}
+function contentAsAsyncIterable(content) {
+  try {
+    if (content instanceof Uint8Array) {
+      return async function* () {
+        yield content;
+      }();
+    } else if (isIterable(content)) {
+      return async function* () {
+        yield* content;
+      }();
+    } else if (isAsyncIterable(content)) {
+      return content;
+    }
+  } catch {
+    throw errCode__default["default"](new Error('Content was invalid'), 'ERR_INVALID_CONTENT');
+  }
+  throw errCode__default["default"](new Error('Content was invalid'), 'ERR_INVALID_CONTENT');
+}
+async function* dagBuilder(source, blockstore, options) {
+  for await (const entry of source) {
+    if (entry.path) {
+      if (entry.path.substring(0, 2) === './') {
+        options.wrapWithDirectory = true;
+      }
+      entry.path = entry.path.split('/').filter(path => path && path !== '.').join('/');
+    }
+    if (entry.content) {
+      let chunker;
+      if (typeof options.chunker === 'function') {
+        chunker = options.chunker;
+      } else if (options.chunker === 'rabin') {
+        chunker = rabin;
+      } else {
+        chunker = fixedSize;
+      }
+      let chunkValidator;
+      if (typeof options.chunkValidator === 'function') {
+        chunkValidator = options.chunkValidator;
+      } else {
+        chunkValidator = validateChunks;
+      }
+      const file = {
+        path: entry.path,
+        mtime: entry.mtime,
+        mode: entry.mode,
+        content: chunker(chunkValidator(contentAsAsyncIterable(entry.content), options), options)
+      };
+      yield () => index(file, blockstore, options);
+    } else if (entry.path) {
+      const dir$1 = {
+        path: entry.path,
+        mtime: entry.mtime,
+        mode: entry.mode
+      };
+      yield () => dir(dir$1, blockstore, options);
+    } else {
+      throw new Error('Import candidate must have content or path or both');
+    }
+  }
+}
+
+module.exports = dagBuilder;
+
+
+/***/ }),
+
+/***/ 6628:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var errCode = __nccwpck_require__(2997);
+var fromString = __nccwpck_require__(3538);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var errCode__default = /*#__PURE__*/_interopDefaultLegacy(errCode);
+
+async function* validateChunks(source) {
+  for await (const content of source) {
+    if (content.length === undefined) {
+      throw errCode__default["default"](new Error('Content was invalid'), 'ERR_INVALID_CONTENT');
+    }
+    if (typeof content === 'string' || content instanceof String) {
+      yield fromString.fromString(content.toString());
+    } else if (Array.isArray(content)) {
+      yield Uint8Array.from(content);
+    } else if (content instanceof Uint8Array) {
+      yield content;
+    } else {
+      throw errCode__default["default"](new Error('Content was invalid'), 'ERR_INVALID_CONTENT');
+    }
+  }
+}
+
+module.exports = validateChunks;
+
+
+/***/ }),
+
+/***/ 5849:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var dagPb = __nccwpck_require__(8012);
+var ipfsUnixfs = __nccwpck_require__(4103);
+var dir = __nccwpck_require__(4173);
+var persist = __nccwpck_require__(8095);
+
+class DirFlat extends dir {
+  constructor(props, options) {
+    super(props, options);
+    this._children = {};
+  }
+  async put(name, value) {
+    this.cid = undefined;
+    this.size = undefined;
+    this._children[name] = value;
+  }
+  get(name) {
+    return Promise.resolve(this._children[name]);
+  }
+  childCount() {
+    return Object.keys(this._children).length;
+  }
+  directChildrenCount() {
+    return this.childCount();
+  }
+  onlyChild() {
+    return this._children[Object.keys(this._children)[0]];
+  }
+  async *eachChildSeries() {
+    const keys = Object.keys(this._children);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      yield {
+        key: key,
+        child: this._children[key]
+      };
+    }
+  }
+  async *flush(block) {
+    const children = Object.keys(this._children);
+    const links = [];
+    for (let i = 0; i < children.length; i++) {
+      let child = this._children[children[i]];
+      if (child instanceof dir) {
+        for await (const entry of child.flush(block)) {
+          child = entry;
+          yield child;
+        }
+      }
+      if (child.size != null && child.cid) {
+        links.push({
+          Name: children[i],
+          Tsize: child.size,
+          Hash: child.cid
+        });
+      }
+    }
+    const unixfs = new ipfsUnixfs.UnixFS({
+      type: 'directory',
+      mtime: this.mtime,
+      mode: this.mode
+    });
+    const node = {
+      Data: unixfs.marshal(),
+      Links: links
+    };
+    const buffer = dagPb.encode(dagPb.prepare(node));
+    const cid = await persist(buffer, block, this.options);
+    const size = buffer.length + node.Links.reduce((acc, curr) => acc + (curr.Tsize == null ? 0 : curr.Tsize), 0);
+    this.cid = cid;
+    this.size = size;
+    yield {
+      cid,
+      unixfs,
+      path: this.path,
+      size
+    };
+  }
+}
+
+module.exports = DirFlat;
+
+
+/***/ }),
+
+/***/ 2922:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var dagPb = __nccwpck_require__(8012);
+var ipfsUnixfs = __nccwpck_require__(4103);
+var dir = __nccwpck_require__(4173);
+var persist = __nccwpck_require__(8095);
+var hamtSharding = __nccwpck_require__(7820);
+
+class DirSharded extends dir {
+  constructor(props, options) {
+    super(props, options);
+    this._bucket = hamtSharding.createHAMT({
+      hashFn: options.hamtHashFn,
+      bits: options.hamtBucketBits
+    });
+  }
+  async put(name, value) {
+    await this._bucket.put(name, value);
+  }
+  get(name) {
+    return this._bucket.get(name);
+  }
+  childCount() {
+    return this._bucket.leafCount();
+  }
+  directChildrenCount() {
+    return this._bucket.childrenCount();
+  }
+  onlyChild() {
+    return this._bucket.onlyChild();
+  }
+  async *eachChildSeries() {
+    for await (const {key, value} of this._bucket.eachLeafSeries()) {
+      yield {
+        key,
+        child: value
+      };
+    }
+  }
+  async *flush(blockstore) {
+    for await (const entry of flush(this._bucket, blockstore, this, this.options)) {
+      yield {
+        ...entry,
+        path: this.path
+      };
+    }
+  }
+}
+async function* flush(bucket, blockstore, shardRoot, options) {
+  const children = bucket._children;
+  const links = [];
+  let childrenSize = 0;
+  for (let i = 0; i < children.length; i++) {
+    const child = children.get(i);
+    if (!child) {
+      continue;
+    }
+    const labelPrefix = i.toString(16).toUpperCase().padStart(2, '0');
+    if (child instanceof hamtSharding.Bucket) {
+      let shard;
+      for await (const subShard of await flush(child, blockstore, null, options)) {
+        shard = subShard;
+      }
+      if (!shard) {
+        throw new Error('Could not flush sharded directory, no subshard found');
+      }
+      links.push({
+        Name: labelPrefix,
+        Tsize: shard.size,
+        Hash: shard.cid
+      });
+      childrenSize += shard.size;
+    } else if (typeof child.value.flush === 'function') {
+      const dir = child.value;
+      let flushedDir;
+      for await (const entry of dir.flush(blockstore)) {
+        flushedDir = entry;
+        yield flushedDir;
+      }
+      const label = labelPrefix + child.key;
+      links.push({
+        Name: label,
+        Tsize: flushedDir.size,
+        Hash: flushedDir.cid
+      });
+      childrenSize += flushedDir.size;
+    } else {
+      const value = child.value;
+      if (!value.cid) {
+        continue;
+      }
+      const label = labelPrefix + child.key;
+      const size = value.size;
+      links.push({
+        Name: label,
+        Tsize: size,
+        Hash: value.cid
+      });
+      childrenSize += size;
+    }
+  }
+  const data = Uint8Array.from(children.bitField().reverse());
+  const dir = new ipfsUnixfs.UnixFS({
+    type: 'hamt-sharded-directory',
+    data,
+    fanout: bucket.tableSize(),
+    hashType: options.hamtHashCode,
+    mtime: shardRoot && shardRoot.mtime,
+    mode: shardRoot && shardRoot.mode
+  });
+  const node = {
+    Data: dir.marshal(),
+    Links: links
+  };
+  const buffer = dagPb.encode(dagPb.prepare(node));
+  const cid = await persist(buffer, blockstore, options);
+  const size = buffer.length + childrenSize;
+  yield {
+    cid,
+    unixfs: dir,
+    size
+  };
+}
+
+module.exports = DirSharded;
+
+
+/***/ }),
+
+/***/ 4173:
+/***/ ((module) => {
+
+"use strict";
+
+
+class Dir {
+  constructor(props, options) {
+    this.options = options || {};
+    this.root = props.root;
+    this.dir = props.dir;
+    this.path = props.path;
+    this.dirty = props.dirty;
+    this.flat = props.flat;
+    this.parent = props.parent;
+    this.parentKey = props.parentKey;
+    this.unixfs = props.unixfs;
+    this.mode = props.mode;
+    this.mtime = props.mtime;
+    this.cid = undefined;
+    this.size = undefined;
+  }
+  async put(name, value) {
+  }
+  get(name) {
+    return Promise.resolve(this);
+  }
+  async *eachChildSeries() {
+  }
+  async *flush(blockstore) {
+  }
+}
+
+module.exports = Dir;
+
+
+/***/ }),
+
+/***/ 1622:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var dirSharded = __nccwpck_require__(2922);
+var dirFlat = __nccwpck_require__(5849);
+
+async function flatToShard(child, dir, threshold, options) {
+  let newDir = dir;
+  if (dir instanceof dirFlat && dir.directChildrenCount() >= threshold) {
+    newDir = await convertToShard(dir, options);
+  }
+  const parent = newDir.parent;
+  if (parent) {
+    if (newDir !== dir) {
+      if (child) {
+        child.parent = newDir;
+      }
+      if (!newDir.parentKey) {
+        throw new Error('No parent key found');
+      }
+      await parent.put(newDir.parentKey, newDir);
+    }
+    return flatToShard(newDir, parent, threshold, options);
+  }
+  return newDir;
+}
+async function convertToShard(oldDir, options) {
+  const newDir = new dirSharded({
+    root: oldDir.root,
+    dir: true,
+    parent: oldDir.parent,
+    parentKey: oldDir.parentKey,
+    path: oldDir.path,
+    dirty: oldDir.dirty,
+    flat: false,
+    mtime: oldDir.mtime,
+    mode: oldDir.mode
+  }, options);
+  for await (const {key, child} of oldDir.eachChildSeries()) {
+    await newDir.put(key, child);
+  }
+  return newDir;
+}
+
+module.exports = flatToShard;
+
+
+/***/ }),
+
+/***/ 1626:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var parallelBatch = __nccwpck_require__(6615);
+var options = __nccwpck_require__(9902);
+var index = __nccwpck_require__(4390);
+var treeBuilder = __nccwpck_require__(5101);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var parallelBatch__default = /*#__PURE__*/_interopDefaultLegacy(parallelBatch);
+
+async function* importer(source, blockstore, options$1 = {}) {
+  const opts = options(options$1);
+  let dagBuilder;
+  if (typeof options$1.dagBuilder === 'function') {
+    dagBuilder = options$1.dagBuilder;
+  } else {
+    dagBuilder = index;
+  }
+  let treeBuilder$1;
+  if (typeof options$1.treeBuilder === 'function') {
+    treeBuilder$1 = options$1.treeBuilder;
+  } else {
+    treeBuilder$1 = treeBuilder;
+  }
+  let candidates;
+  if (Symbol.asyncIterator in source || Symbol.iterator in source) {
+    candidates = source;
+  } else {
+    candidates = [source];
+  }
+  for await (const entry of treeBuilder$1(parallelBatch__default["default"](dagBuilder(candidates, blockstore, opts), opts.fileImportConcurrency), blockstore, opts)) {
+    yield {
+      cid: entry.cid,
+      path: entry.path,
+      unixfs: entry.unixfs,
+      size: entry.size
+    };
+  }
+}
+
+exports.importer = importer;
+
+
+/***/ }),
+
+/***/ 9902:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var mergeOptions = __nccwpck_require__(2555);
+var sha2 = __nccwpck_require__(6987);
+var murmur3 = __nccwpck_require__(6063);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var mergeOptions__default = /*#__PURE__*/_interopDefaultLegacy(mergeOptions);
+
+async function hamtHashFn(buf) {
+  return (await murmur3.murmur3128.encode(buf)).slice(0, 8).reverse();
+}
+const defaultOptions = {
+  chunker: 'fixed',
+  strategy: 'balanced',
+  rawLeaves: false,
+  onlyHash: false,
+  reduceSingleLeafToSelf: true,
+  hasher: sha2.sha256,
+  leafType: 'file',
+  cidVersion: 0,
+  progress: () => () => {
+  },
+  shardSplitThreshold: 1000,
+  fileImportConcurrency: 50,
+  blockWriteConcurrency: 10,
+  minChunkSize: 262144,
+  maxChunkSize: 262144,
+  avgChunkSize: 262144,
+  window: 16,
+  polynomial: 17437180132763652,
+  maxChildrenPerNode: 174,
+  layerRepeat: 4,
+  wrapWithDirectory: false,
+  recursive: false,
+  hidden: false,
+  timeout: undefined,
+  hamtHashFn,
+  hamtHashCode: 34,
+  hamtBucketBits: 8
+};
+var defaultOptions$1 = (options = {}) => {
+  const defaults = mergeOptions__default["default"].bind({ ignoreUndefined: true });
+  return defaults(defaultOptions, options);
+};
+
+module.exports = defaultOptions$1;
+
+
+/***/ }),
+
+/***/ 5101:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var dirFlat = __nccwpck_require__(5849);
+var flatToShard = __nccwpck_require__(1622);
+var dir = __nccwpck_require__(4173);
+var toPathComponents = __nccwpck_require__(4473);
+
+async function addToTree(elem, tree, options) {
+  const pathElems = toPathComponents(elem.path || '');
+  const lastIndex = pathElems.length - 1;
+  let parent = tree;
+  let currentPath = '';
+  for (let i = 0; i < pathElems.length; i++) {
+    const pathElem = pathElems[i];
+    currentPath += `${ currentPath ? '/' : '' }${ pathElem }`;
+    const last = i === lastIndex;
+    parent.dirty = true;
+    parent.cid = undefined;
+    parent.size = undefined;
+    if (last) {
+      await parent.put(pathElem, elem);
+      tree = await flatToShard(null, parent, options.shardSplitThreshold, options);
+    } else {
+      let dir$1 = await parent.get(pathElem);
+      if (!dir$1 || !(dir$1 instanceof dir)) {
+        dir$1 = new dirFlat({
+          root: false,
+          dir: true,
+          parent: parent,
+          parentKey: pathElem,
+          path: currentPath,
+          dirty: true,
+          flat: true,
+          mtime: dir$1 && dir$1.unixfs && dir$1.unixfs.mtime,
+          mode: dir$1 && dir$1.unixfs && dir$1.unixfs.mode
+        }, options);
+      }
+      await parent.put(pathElem, dir$1);
+      parent = dir$1;
+    }
+  }
+  return tree;
+}
+async function* flushAndYield(tree, blockstore) {
+  if (!(tree instanceof dir)) {
+    if (tree && tree.unixfs && tree.unixfs.isDirectory()) {
+      yield tree;
+    }
+    return;
+  }
+  yield* tree.flush(blockstore);
+}
+async function* treeBuilder(source, block, options) {
+  let tree = new dirFlat({
+    root: true,
+    dir: true,
+    path: '',
+    dirty: true,
+    flat: true
+  }, options);
+  for await (const entry of source) {
+    if (!entry) {
+      continue;
+    }
+    tree = await addToTree(entry, tree, options);
+    if (!entry.unixfs || !entry.unixfs.isDirectory()) {
+      yield entry;
+    }
+  }
+  if (options.wrapWithDirectory) {
+    yield* flushAndYield(tree, block);
+  } else {
+    for await (const unwrapped of tree.eachChildSeries()) {
+      if (!unwrapped) {
+        continue;
+      }
+      yield* flushAndYield(unwrapped.child, block);
+    }
+  }
+}
+
+module.exports = treeBuilder;
+
+
+/***/ }),
+
+/***/ 8095:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var cid = __nccwpck_require__(6447);
+var dagPb = __nccwpck_require__(8012);
+var sha2 = __nccwpck_require__(6987);
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var dagPb__namespace = /*#__PURE__*/_interopNamespace(dagPb);
+
+const persist = async (buffer, blockstore, options) => {
+  if (!options.codec) {
+    options.codec = dagPb__namespace;
+  }
+  if (!options.hasher) {
+    options.hasher = sha2.sha256;
+  }
+  if (options.cidVersion === undefined) {
+    options.cidVersion = 1;
+  }
+  if (options.codec === dagPb__namespace && options.hasher !== sha2.sha256) {
+    options.cidVersion = 1;
+  }
+  const multihash = await options.hasher.digest(buffer);
+  const cid$1 = cid.CID.create(options.cidVersion, options.codec.code, multihash);
+  if (!options.onlyHash) {
+    await blockstore.put(cid$1, buffer, { signal: options.signal });
+  }
+  return cid$1;
+};
+
+module.exports = persist;
+
+
+/***/ }),
+
+/***/ 4473:
+/***/ ((module) => {
+
+"use strict";
+
+
+const toPathComponents = (path = '') => {
+  return (path.trim().match(/([^\\/]|\\\/)+/g) || []).filter(Boolean);
+};
+
+module.exports = toPathComponents;
 
 
 /***/ }),
@@ -20861,6 +25356,100 @@ module.exports = all
 
 /***/ }),
 
+/***/ 3454:
+/***/ ((module) => {
+
+"use strict";
+
+
+/**
+ * Takes an (async) iterable that emits things and returns an async iterable that
+ * emits those things in fixed-sized batches.
+ *
+ * @template T
+ * @param {AsyncIterable<T>|Iterable<T>} source
+ * @param {number} [size=1]
+ * @returns {AsyncIterable<T[]>}
+ */
+async function * batch (source, size = 1) {
+  /** @type {T[]} */
+  let things = []
+
+  if (size < 1) {
+    size = 1
+  }
+
+  for await (const thing of source) {
+    things.push(thing)
+
+    while (things.length >= size) {
+      yield things.slice(0, size)
+
+      things = things.slice(size)
+    }
+  }
+
+  while (things.length) {
+    yield things.slice(0, size)
+
+    things = things.slice(size)
+  }
+}
+
+module.exports = batch
+
+
+/***/ }),
+
+/***/ 1798:
+/***/ ((module) => {
+
+"use strict";
+
+
+/**
+ * Drains an (async) iterable discarding its' content and does not return
+ * anything.
+ *
+ * @template T
+ * @param {AsyncIterable<T>|Iterable<T>} source
+ * @returns {Promise<void>}
+ */
+const drain = async (source) => {
+  for await (const _ of source) { } // eslint-disable-line no-unused-vars,no-empty
+}
+
+module.exports = drain
+
+
+/***/ }),
+
+/***/ 2220:
+/***/ ((module) => {
+
+"use strict";
+
+
+/**
+ * Filters the passed (async) iterable by using the filter function
+ *
+ * @template T
+ * @param {AsyncIterable<T>|Iterable<T>} source
+ * @param {function(T):boolean|Promise<boolean>} fn
+ */
+const filter = async function * (source, fn) {
+  for await (const entry of source) {
+    if (await fn(entry)) {
+      yield entry
+    }
+  }
+}
+
+module.exports = filter
+
+
+/***/ }),
+
 /***/ 8795:
 /***/ ((module) => {
 
@@ -21023,6 +25612,61 @@ module.exports = map
 
 /***/ }),
 
+/***/ 6615:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const batch = __nccwpck_require__(3454)
+
+/**
+ * @template T
+ * @typedef {{ok:true, value:T}} Success
+ */
+
+/**
+ * @typedef {{ok:false, err:Error}} Failure
+ */
+
+/**
+ * Takes an (async) iterator that emits promise-returning functions,
+ * invokes them in parallel and emits the results as they become available but
+ * in the same order as the input
+ *
+ * @template T
+ * @param {AsyncIterable<() => Promise<T>>|Iterable<() => Promise<T>>} source
+ * @param {number} [size=1]
+ * @returns {AsyncIterable<T>}
+ */
+async function * parallelBatch (source, size = 1) {
+  for await (const tasks of batch(source, size)) {
+    /** @type {Promise<Success<T>|Failure>[]} */
+    const things = tasks.map(
+      /**
+       * @param {() => Promise<T>} p
+       */
+      p => {
+        return p().then(value => ({ ok: true, value }), err => ({ ok: false, err }))
+      })
+
+    for (let i = 0; i < things.length; i++) {
+      const result = await things[i]
+
+      if (result.ok) {
+        yield result.value
+      } else {
+        throw result.err
+      }
+    }
+  }
+}
+
+module.exports = parallelBatch
+
+
+/***/ }),
+
 /***/ 2276:
 /***/ ((module) => {
 
@@ -21103,6 +25747,106 @@ function peekableIterator (iterable) {
 }
 
 module.exports = peekableIterator
+
+
+/***/ }),
+
+/***/ 7185:
+/***/ ((module) => {
+
+const rawPipe = (...fns) => {
+  let res
+  while (fns.length) {
+    res = fns.shift()(res)
+  }
+  return res
+}
+
+const isIterable = obj => obj && (
+  typeof obj[Symbol.asyncIterator] === 'function' ||
+  typeof obj[Symbol.iterator] === 'function' ||
+  typeof obj.next === 'function' // Probably, right?
+)
+
+const isDuplex = obj => obj && typeof obj.sink === 'function' && isIterable(obj.source)
+
+const duplexPipelineFn = duplex => source => {
+  duplex.sink(source) // TODO: error on sink side is unhandled rejection - this is the same as pull streams
+  return duplex.source
+}
+
+const pipe = (...fns) => {
+  // Duplex at start: wrap in function and return duplex source
+  if (isDuplex(fns[0])) {
+    const duplex = fns[0]
+    fns[0] = () => duplex.source
+  // Iterable at start: wrap in function
+  } else if (isIterable(fns[0])) {
+    const source = fns[0]
+    fns[0] = () => source
+  }
+
+  if (fns.length > 1) {
+    // Duplex at end: use duplex sink
+    if (isDuplex(fns[fns.length - 1])) {
+      fns[fns.length - 1] = fns[fns.length - 1].sink
+    }
+  }
+
+  if (fns.length > 2) {
+    // Duplex in the middle, consume source with duplex sink and return duplex source
+    for (let i = 1; i < fns.length - 1; i++) {
+      if (isDuplex(fns[i])) {
+        fns[i] = duplexPipelineFn(fns[i])
+      }
+    }
+  }
+
+  return rawPipe(...fns)
+}
+
+module.exports = pipe
+module.exports.pipe = pipe
+module.exports.rawPipe = rawPipe
+module.exports.isIterable = isIterable
+module.exports.isDuplex = isDuplex
+
+
+/***/ }),
+
+/***/ 2360:
+/***/ ((module) => {
+
+"use strict";
+
+
+/**
+ * Stop iteration after n items have been received.
+ *
+ * @template T
+ * @param {AsyncIterable<T>|Iterable<T>} source
+ * @param {number} limit
+ * @returns {AsyncIterable<T>}
+ */
+const take = async function * (source, limit) {
+  let items = 0
+
+  if (limit < 1) {
+    return
+  }
+
+  for await (const entry of source) {
+    yield entry
+
+    items++
+
+    if (items === limit) {
+      return
+    }
+  }
+}
+
+module.exports = take
 
 
 /***/ }),
@@ -26544,6 +31288,82 @@ function regExpEscape (s) {
 
 /***/ }),
 
+/***/ 5941:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+const path = __nccwpck_require__(1017);
+const fs = __nccwpck_require__(7147);
+const pathExists = __nccwpck_require__(6978);
+
+const fsP = fs.promises;
+
+module.exports = async (source, destination, options) => {
+	if (!source || !destination) {
+		throw new TypeError('`source` and `destination` file required');
+	}
+
+	options = {
+		overwrite: true,
+		...options
+	};
+
+	if (!options.overwrite && await pathExists(destination)) {
+		throw new Error(`The destination file exists: ${destination}`);
+	}
+
+	await fsP.mkdir(path.dirname(destination), {
+		recursive: true,
+		mode: options.directoryMode
+	});
+
+	try {
+		await fsP.rename(source, destination);
+	} catch (error) {
+		if (error.code === 'EXDEV') {
+			await fsP.copyFile(source, destination);
+			await fsP.unlink(source);
+		} else {
+			throw error;
+		}
+	}
+};
+
+module.exports.sync = (source, destination, options) => {
+	if (!source || !destination) {
+		throw new TypeError('`source` and `destination` file required');
+	}
+
+	options = {
+		overwrite: true,
+		...options
+	};
+
+	if (!options.overwrite && fs.existsSync(destination)) {
+		throw new Error(`The destination file exists: ${destination}`);
+	}
+
+	fs.mkdirSync(path.dirname(destination), {
+		recursive: true,
+		mode: options.directoryMode
+	});
+
+	try {
+		fs.renameSync(source, destination);
+	} catch (error) {
+		if (error.code === 'EXDEV') {
+			fs.copyFileSync(source, destination);
+			fs.unlinkSync(source);
+		} else {
+			throw error;
+		}
+	}
+};
+
+
+/***/ }),
+
 /***/ 900:
 /***/ ((module) => {
 
@@ -29599,6 +34419,581 @@ module.exports = varint$1;
 
 /***/ }),
 
+/***/ 7214:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+module.exports = __nccwpck_require__(1306);
+
+
+/***/ }),
+
+/***/ 1306:
+/***/ (function(module, exports) {
+
+/* jshint -W086: true */
+// +----------------------------------------------------------------------+
+// | murmurHash3js.js v3.0.1 // https://github.com/pid/murmurHash3js
+// | A javascript implementation of MurmurHash3's x86 hashing algorithms. |
+// |----------------------------------------------------------------------|
+// | Copyright (c) 2012-2015 Karan Lyons                                       |
+// | https://github.com/karanlyons/murmurHash3.js/blob/c1778f75792abef7bdd74bc85d2d4e1a3d25cfe9/murmurHash3.js |
+// | Freely distributable under the MIT license.                          |
+// +----------------------------------------------------------------------+
+
+;(function (root, undefined) {
+    'use strict';
+
+    // Create a local object that'll be exported or referenced globally.
+    var library = {
+        'version': '3.0.0',
+        'x86': {},
+        'x64': {},
+        'inputValidation': true
+    };
+
+    // PRIVATE FUNCTIONS
+    // -----------------
+
+    function _validBytes(bytes) {
+        // check the input is an array or a typed array
+        if (!Array.isArray(bytes) && !ArrayBuffer.isView(bytes)) {
+            return false;
+        }
+
+        // check all bytes are actually bytes
+        for (var i = 0; i < bytes.length; i++) {
+            if (!Number.isInteger(bytes[i]) || bytes[i] < 0 || bytes[i] > 255) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function _x86Multiply(m, n) {
+        //
+        // Given two 32bit ints, returns the two multiplied together as a
+        // 32bit int.
+        //
+
+        return ((m & 0xffff) * n) + ((((m >>> 16) * n) & 0xffff) << 16);
+    }
+
+    function _x86Rotl(m, n) {
+        //
+        // Given a 32bit int and an int representing a number of bit positions,
+        // returns the 32bit int rotated left by that number of positions.
+        //
+
+        return (m << n) | (m >>> (32 - n));
+    }
+
+    function _x86Fmix(h) {
+        //
+        // Given a block, returns murmurHash3's final x86 mix of that block.
+        //
+
+        h ^= h >>> 16;
+        h = _x86Multiply(h, 0x85ebca6b);
+        h ^= h >>> 13;
+        h = _x86Multiply(h, 0xc2b2ae35);
+        h ^= h >>> 16;
+
+        return h;
+    }
+
+    function _x64Add(m, n) {
+        //
+        // Given two 64bit ints (as an array of two 32bit ints) returns the two
+        // added together as a 64bit int (as an array of two 32bit ints).
+        //
+
+        m = [m[0] >>> 16, m[0] & 0xffff, m[1] >>> 16, m[1] & 0xffff];
+        n = [n[0] >>> 16, n[0] & 0xffff, n[1] >>> 16, n[1] & 0xffff];
+        var o = [0, 0, 0, 0];
+
+        o[3] += m[3] + n[3];
+        o[2] += o[3] >>> 16;
+        o[3] &= 0xffff;
+
+        o[2] += m[2] + n[2];
+        o[1] += o[2] >>> 16;
+        o[2] &= 0xffff;
+
+        o[1] += m[1] + n[1];
+        o[0] += o[1] >>> 16;
+        o[1] &= 0xffff;
+
+        o[0] += m[0] + n[0];
+        o[0] &= 0xffff;
+
+        return [(o[0] << 16) | o[1], (o[2] << 16) | o[3]];
+    }
+
+    function _x64Multiply(m, n) {
+        //
+        // Given two 64bit ints (as an array of two 32bit ints) returns the two
+        // multiplied together as a 64bit int (as an array of two 32bit ints).
+        //
+
+        m = [m[0] >>> 16, m[0] & 0xffff, m[1] >>> 16, m[1] & 0xffff];
+        n = [n[0] >>> 16, n[0] & 0xffff, n[1] >>> 16, n[1] & 0xffff];
+        var o = [0, 0, 0, 0];
+
+        o[3] += m[3] * n[3];
+        o[2] += o[3] >>> 16;
+        o[3] &= 0xffff;
+
+        o[2] += m[2] * n[3];
+        o[1] += o[2] >>> 16;
+        o[2] &= 0xffff;
+
+        o[2] += m[3] * n[2];
+        o[1] += o[2] >>> 16;
+        o[2] &= 0xffff;
+
+        o[1] += m[1] * n[3];
+        o[0] += o[1] >>> 16;
+        o[1] &= 0xffff;
+
+        o[1] += m[2] * n[2];
+        o[0] += o[1] >>> 16;
+        o[1] &= 0xffff;
+
+        o[1] += m[3] * n[1];
+        o[0] += o[1] >>> 16;
+        o[1] &= 0xffff;
+
+        o[0] += (m[0] * n[3]) + (m[1] * n[2]) + (m[2] * n[1]) + (m[3] * n[0]);
+        o[0] &= 0xffff;
+
+        return [(o[0] << 16) | o[1], (o[2] << 16) | o[3]];
+    }
+
+    function _x64Rotl(m, n) {
+        //
+        // Given a 64bit int (as an array of two 32bit ints) and an int
+        // representing a number of bit positions, returns the 64bit int (as an
+        // array of two 32bit ints) rotated left by that number of positions.
+        //
+
+        n %= 64;
+
+        if (n === 32) {
+            return [m[1], m[0]];
+        } else if (n < 32) {
+            return [(m[0] << n) | (m[1] >>> (32 - n)), (m[1] << n) | (m[0] >>> (32 - n))];
+        } else {
+            n -= 32;
+            return [(m[1] << n) | (m[0] >>> (32 - n)), (m[0] << n) | (m[1] >>> (32 - n))];
+        }
+    }
+
+    function _x64LeftShift(m, n) {
+        //
+        // Given a 64bit int (as an array of two 32bit ints) and an int
+        // representing a number of bit positions, returns the 64bit int (as an
+        // array of two 32bit ints) shifted left by that number of positions.
+        //
+
+        n %= 64;
+
+        if (n === 0) {
+            return m;
+        } else if (n < 32) {
+            return [(m[0] << n) | (m[1] >>> (32 - n)), m[1] << n];
+        } else {
+            return [m[1] << (n - 32), 0];
+        }
+    }
+
+    function _x64Xor(m, n) {
+        //
+        // Given two 64bit ints (as an array of two 32bit ints) returns the two
+        // xored together as a 64bit int (as an array of two 32bit ints).
+        //
+
+        return [m[0] ^ n[0], m[1] ^ n[1]];
+    }
+
+    function _x64Fmix(h) {
+        //
+        // Given a block, returns murmurHash3's final x64 mix of that block.
+        // (`[0, h[0] >>> 1]` is a 33 bit unsigned right shift. This is the
+        // only place where we need to right shift 64bit ints.)
+        //
+
+        h = _x64Xor(h, [0, h[0] >>> 1]);
+        h = _x64Multiply(h, [0xff51afd7, 0xed558ccd]);
+        h = _x64Xor(h, [0, h[0] >>> 1]);
+        h = _x64Multiply(h, [0xc4ceb9fe, 0x1a85ec53]);
+        h = _x64Xor(h, [0, h[0] >>> 1]);
+
+        return h;
+    }
+
+    // PUBLIC FUNCTIONS
+    // ----------------
+
+    library.x86.hash32 = function (bytes, seed) {
+        //
+        // Given a string and an optional seed as an int, returns a 32 bit hash
+        // using the x86 flavor of MurmurHash3, as an unsigned int.
+        //
+        if (library.inputValidation && !_validBytes(bytes)) {
+            return undefined;
+        }
+        seed = seed || 0;
+
+        var remainder = bytes.length % 4;
+        var blocks = bytes.length - remainder;
+
+        var h1 = seed;
+
+        var k1 = 0;
+
+        var c1 = 0xcc9e2d51;
+        var c2 = 0x1b873593;
+
+        for (var i = 0; i < blocks; i = i + 4) {
+            k1 = (bytes[i]) | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24);
+
+            k1 = _x86Multiply(k1, c1);
+            k1 = _x86Rotl(k1, 15);
+            k1 = _x86Multiply(k1, c2);
+
+            h1 ^= k1;
+            h1 = _x86Rotl(h1, 13);
+            h1 = _x86Multiply(h1, 5) + 0xe6546b64;
+        }
+
+        k1 = 0;
+
+        switch (remainder) {
+            case 3:
+                k1 ^= bytes[i + 2] << 16;
+
+            case 2:
+                k1 ^= bytes[i + 1] << 8;
+
+            case 1:
+                k1 ^= bytes[i];
+                k1 = _x86Multiply(k1, c1);
+                k1 = _x86Rotl(k1, 15);
+                k1 = _x86Multiply(k1, c2);
+                h1 ^= k1;
+        }
+
+        h1 ^= bytes.length;
+        h1 = _x86Fmix(h1);
+
+        return h1 >>> 0;
+    };
+
+    library.x86.hash128 = function (bytes, seed) {
+        //
+        // Given a string and an optional seed as an int, returns a 128 bit
+        // hash using the x86 flavor of MurmurHash3, as an unsigned hex.
+        //
+        if (library.inputValidation && !_validBytes(bytes)) {
+            return undefined;
+        }
+
+        seed = seed || 0;
+        var remainder = bytes.length % 16;
+        var blocks = bytes.length - remainder;
+
+        var h1 = seed;
+        var h2 = seed;
+        var h3 = seed;
+        var h4 = seed;
+
+        var k1 = 0;
+        var k2 = 0;
+        var k3 = 0;
+        var k4 = 0;
+
+        var c1 = 0x239b961b;
+        var c2 = 0xab0e9789;
+        var c3 = 0x38b34ae5;
+        var c4 = 0xa1e38b93;
+
+        for (var i = 0; i < blocks; i = i + 16) {
+            k1 = (bytes[i]) | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24);
+            k2 = (bytes[i + 4]) | (bytes[i + 5] << 8) | (bytes[i + 6] << 16) | (bytes[i + 7] << 24);
+            k3 = (bytes[i + 8]) | (bytes[i + 9] << 8) | (bytes[i + 10] << 16) | (bytes[i + 11] << 24);
+            k4 = (bytes[i + 12]) | (bytes[i + 13] << 8) | (bytes[i + 14] << 16) | (bytes[i + 15] << 24);
+
+            k1 = _x86Multiply(k1, c1);
+            k1 = _x86Rotl(k1, 15);
+            k1 = _x86Multiply(k1, c2);
+            h1 ^= k1;
+
+            h1 = _x86Rotl(h1, 19);
+            h1 += h2;
+            h1 = _x86Multiply(h1, 5) + 0x561ccd1b;
+
+            k2 = _x86Multiply(k2, c2);
+            k2 = _x86Rotl(k2, 16);
+            k2 = _x86Multiply(k2, c3);
+            h2 ^= k2;
+
+            h2 = _x86Rotl(h2, 17);
+            h2 += h3;
+            h2 = _x86Multiply(h2, 5) + 0x0bcaa747;
+
+            k3 = _x86Multiply(k3, c3);
+            k3 = _x86Rotl(k3, 17);
+            k3 = _x86Multiply(k3, c4);
+            h3 ^= k3;
+
+            h3 = _x86Rotl(h3, 15);
+            h3 += h4;
+            h3 = _x86Multiply(h3, 5) + 0x96cd1c35;
+
+            k4 = _x86Multiply(k4, c4);
+            k4 = _x86Rotl(k4, 18);
+            k4 = _x86Multiply(k4, c1);
+            h4 ^= k4;
+
+            h4 = _x86Rotl(h4, 13);
+            h4 += h1;
+            h4 = _x86Multiply(h4, 5) + 0x32ac3b17;
+        }
+
+        k1 = 0;
+        k2 = 0;
+        k3 = 0;
+        k4 = 0;
+
+        switch (remainder) {
+            case 15:
+                k4 ^= bytes[i + 14] << 16;
+
+            case 14:
+                k4 ^= bytes[i + 13] << 8;
+
+            case 13:
+                k4 ^= bytes[i + 12];
+                k4 = _x86Multiply(k4, c4);
+                k4 = _x86Rotl(k4, 18);
+                k4 = _x86Multiply(k4, c1);
+                h4 ^= k4;
+
+            case 12:
+                k3 ^= bytes[i + 11] << 24;
+
+            case 11:
+                k3 ^= bytes[i + 10] << 16;
+
+            case 10:
+                k3 ^= bytes[i + 9] << 8;
+
+            case 9:
+                k3 ^= bytes[i + 8];
+                k3 = _x86Multiply(k3, c3);
+                k3 = _x86Rotl(k3, 17);
+                k3 = _x86Multiply(k3, c4);
+                h3 ^= k3;
+
+            case 8:
+                k2 ^= bytes[i + 7] << 24;
+
+            case 7:
+                k2 ^= bytes[i + 6] << 16;
+
+            case 6:
+                k2 ^= bytes[i + 5] << 8;
+
+            case 5:
+                k2 ^= bytes[i + 4];
+                k2 = _x86Multiply(k2, c2);
+                k2 = _x86Rotl(k2, 16);
+                k2 = _x86Multiply(k2, c3);
+                h2 ^= k2;
+
+            case 4:
+                k1 ^= bytes[i + 3] << 24;
+
+            case 3:
+                k1 ^= bytes[i + 2] << 16;
+
+            case 2:
+                k1 ^= bytes[i + 1] << 8;
+
+            case 1:
+                k1 ^= bytes[i];
+                k1 = _x86Multiply(k1, c1);
+                k1 = _x86Rotl(k1, 15);
+                k1 = _x86Multiply(k1, c2);
+                h1 ^= k1;
+        }
+
+        h1 ^= bytes.length;
+        h2 ^= bytes.length;
+        h3 ^= bytes.length;
+        h4 ^= bytes.length;
+
+        h1 += h2;
+        h1 += h3;
+        h1 += h4;
+        h2 += h1;
+        h3 += h1;
+        h4 += h1;
+
+        h1 = _x86Fmix(h1);
+        h2 = _x86Fmix(h2);
+        h3 = _x86Fmix(h3);
+        h4 = _x86Fmix(h4);
+
+        h1 += h2;
+        h1 += h3;
+        h1 += h4;
+        h2 += h1;
+        h3 += h1;
+        h4 += h1;
+
+        return ("00000000" + (h1 >>> 0).toString(16)).slice(-8) + ("00000000" + (h2 >>> 0).toString(16)).slice(-8) + ("00000000" + (h3 >>> 0).toString(16)).slice(-8) + ("00000000" + (h4 >>> 0).toString(16)).slice(-8);
+    };
+
+    library.x64.hash128 = function (bytes, seed) {
+        //
+        // Given a string and an optional seed as an int, returns a 128 bit
+        // hash using the x64 flavor of MurmurHash3, as an unsigned hex.
+        //
+        if (library.inputValidation && !_validBytes(bytes)) {
+            return undefined;
+        }
+        seed = seed || 0;
+
+        var remainder = bytes.length % 16;
+        var blocks = bytes.length - remainder;
+
+        var h1 = [0, seed];
+        var h2 = [0, seed];
+
+        var k1 = [0, 0];
+        var k2 = [0, 0];
+
+        var c1 = [0x87c37b91, 0x114253d5];
+        var c2 = [0x4cf5ad43, 0x2745937f];
+
+        for (var i = 0; i < blocks; i = i + 16) {
+            k1 = [(bytes[i + 4]) | (bytes[i + 5] << 8) | (bytes[i + 6] << 16) | (bytes[i + 7] << 24), (bytes[i]) |
+                (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24)];
+            k2 = [(bytes[i + 12]) | (bytes[i + 13] << 8) | (bytes[i + 14] << 16) | (bytes[i + 15] << 24), (bytes[i + 8]) |
+                (bytes[i + 9] << 8) | (bytes[i + 10] << 16) | (bytes[i + 11] << 24)];
+
+            k1 = _x64Multiply(k1, c1);
+            k1 = _x64Rotl(k1, 31);
+            k1 = _x64Multiply(k1, c2);
+            h1 = _x64Xor(h1, k1);
+
+            h1 = _x64Rotl(h1, 27);
+            h1 = _x64Add(h1, h2);
+            h1 = _x64Add(_x64Multiply(h1, [0, 5]), [0, 0x52dce729]);
+
+            k2 = _x64Multiply(k2, c2);
+            k2 = _x64Rotl(k2, 33);
+            k2 = _x64Multiply(k2, c1);
+            h2 = _x64Xor(h2, k2);
+
+            h2 = _x64Rotl(h2, 31);
+            h2 = _x64Add(h2, h1);
+            h2 = _x64Add(_x64Multiply(h2, [0, 5]), [0, 0x38495ab5]);
+        }
+
+        k1 = [0, 0];
+        k2 = [0, 0];
+
+        switch (remainder) {
+            case 15:
+                k2 = _x64Xor(k2, _x64LeftShift([0, bytes[i + 14]], 48));
+
+            case 14:
+                k2 = _x64Xor(k2, _x64LeftShift([0, bytes[i + 13]], 40));
+
+            case 13:
+                k2 = _x64Xor(k2, _x64LeftShift([0, bytes[i + 12]], 32));
+
+            case 12:
+                k2 = _x64Xor(k2, _x64LeftShift([0, bytes[i + 11]], 24));
+
+            case 11:
+                k2 = _x64Xor(k2, _x64LeftShift([0, bytes[i + 10]], 16));
+
+            case 10:
+                k2 = _x64Xor(k2, _x64LeftShift([0, bytes[i + 9]], 8));
+
+            case 9:
+                k2 = _x64Xor(k2, [0, bytes[i + 8]]);
+                k2 = _x64Multiply(k2, c2);
+                k2 = _x64Rotl(k2, 33);
+                k2 = _x64Multiply(k2, c1);
+                h2 = _x64Xor(h2, k2);
+
+            case 8:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 7]], 56));
+
+            case 7:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 6]], 48));
+
+            case 6:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 5]], 40));
+
+            case 5:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 4]], 32));
+
+            case 4:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 3]], 24));
+
+            case 3:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 2]], 16));
+
+            case 2:
+                k1 = _x64Xor(k1, _x64LeftShift([0, bytes[i + 1]], 8));
+
+            case 1:
+                k1 = _x64Xor(k1, [0, bytes[i]]);
+                k1 = _x64Multiply(k1, c1);
+                k1 = _x64Rotl(k1, 31);
+                k1 = _x64Multiply(k1, c2);
+                h1 = _x64Xor(h1, k1);
+        }
+
+        h1 = _x64Xor(h1, [0, bytes.length]);
+        h2 = _x64Xor(h2, [0, bytes.length]);
+
+        h1 = _x64Add(h1, h2);
+        h2 = _x64Add(h2, h1);
+
+        h1 = _x64Fmix(h1);
+        h2 = _x64Fmix(h2);
+
+        h1 = _x64Add(h1, h2);
+        h2 = _x64Add(h2, h1);
+
+        return ("00000000" + (h1[0] >>> 0).toString(16)).slice(-8) + ("00000000" + (h1[1] >>> 0).toString(16)).slice(-8) + ("00000000" + (h2[0] >>> 0).toString(16)).slice(-8) + ("00000000" + (h2[1] >>> 0).toString(16)).slice(-8);
+    };
+
+    // INITIALIZATION
+    // --------------
+
+    // Export murmurHash3 for CommonJS, either as an AMD module or just as part
+    // of the global object.
+    if (true) {
+
+        if ( true && module.exports) {
+            exports = module.exports = library;
+        }
+
+        exports.murmurHash3 = library;
+
+    } else {}
+})(this);
+
+
+/***/ }),
+
 /***/ 5853:
 /***/ ((module) => {
 
@@ -29742,6 +35137,37 @@ function parse(str='', format='ms'){
 function unitRatio(str) {
   return parse[str] || parse[str.toLowerCase().replace(/s$/, '')]
 }
+
+
+/***/ }),
+
+/***/ 6978:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+const fs = __nccwpck_require__(7147);
+const {promisify} = __nccwpck_require__(3837);
+
+const pAccess = promisify(fs.access);
+
+module.exports = async path => {
+	try {
+		await pAccess(path);
+		return true;
+	} catch (_) {
+		return false;
+	}
+};
+
+module.exports.sync = path => {
+	try {
+		fs.accessSync(path);
+		return true;
+	} catch (_) {
+		return false;
+	}
+};
 
 
 /***/ }),
@@ -31703,6 +37129,107 @@ BufferWriter._configure();
 
 /***/ }),
 
+/***/ 4580:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+const { instantiateSync } = __nccwpck_require__(1748);
+const fs = __nccwpck_require__(7147)
+
+loadWebAssembly.supported = typeof WebAssembly !== 'undefined'
+
+async function loadWebAssembly (imp = {}) {
+  if (!loadWebAssembly.supported) return null
+  
+  return instantiateSync(fs.readFileSync(__nccwpck_require__.ab + "rabin.wasm"), imp);
+}
+module.exports = loadWebAssembly
+
+
+/***/ }),
+
+/***/ 1715:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const Rabin = __nccwpck_require__(5519)
+const getRabin = __nccwpck_require__(4580)
+
+const create = async (avg, min, max, windowSize, polynomial) => {
+    const compiled = await getRabin()
+    return new Rabin(compiled, avg, min, max, windowSize, polynomial)
+}
+
+module.exports = {
+    Rabin,
+    create
+}
+
+
+/***/ }),
+
+/***/ 5519:
+/***/ ((module) => {
+
+/**
+ * Rabin fingerprinting
+ *
+ * @class Rabin
+ */
+class Rabin {
+    /**
+     * Creates an instance of Rabin.
+     * @param { import("./../dist/rabin-wasm") } asModule
+     * @param {number} [bits=12]
+     * @param {number} [min=8 * 1024]
+     * @param {number} [max=32 * 1024]
+     * @param {number} polynomial
+     * @memberof Rabin
+     */
+    constructor(asModule, bits = 12, min = 8 * 1024, max = 32 * 1024, windowSize = 64, polynomial) {
+        this.bits = bits
+        this.min = min
+        this.max = max
+        this.asModule = asModule
+        this.rabin = new asModule.Rabin(bits, min, max, windowSize, polynomial)
+        this.polynomial = polynomial
+    }
+
+    /**
+     * Fingerprints the buffer
+     *
+     * @param {Uint8Array} buf
+     * @returns {Array<number>}
+     * @memberof Rabin
+     */
+    fingerprint(buf) {
+        const {
+            __retain,
+            __release,
+            __allocArray,
+            __getInt32Array,
+            Int32Array_ID,
+            Uint8Array_ID
+        } = this.asModule
+
+        const lengths = new Int32Array(Math.ceil(buf.length/this.min))
+        const lengthsPtr = __retain(__allocArray(Int32Array_ID, lengths))
+        const pointer = __retain(__allocArray(Uint8Array_ID, buf))
+
+        const out = this.rabin.fingerprint(pointer, lengthsPtr)
+        const processed = __getInt32Array(out)
+
+        __release(pointer)
+        __release(lengthsPtr)
+
+        const end = processed.indexOf(0);
+        return end >= 0 ? processed.subarray(0, end) : processed;
+    }
+}
+
+module.exports = Rabin
+
+/***/ }),
+
 /***/ 5118:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -31785,6 +37312,263 @@ if (!safer.constants) {
 
 module.exports = safer
 
+
+/***/ }),
+
+/***/ 1128:
+/***/ ((module) => {
+
+"use strict";
+
+
+// JS treats subjects of bitwise operators as SIGNED 32 bit numbers,
+// which means the maximum amount of bits we can store inside each byte
+// is 7..
+const BITS_PER_BYTE = 7
+
+module.exports = class SparseArray {
+  constructor () {
+    this._bitArrays = []
+    this._data = []
+    this._length = 0
+    this._changedLength = false
+    this._changedData = false
+  }
+
+  set (index, value) {
+    let pos = this._internalPositionFor(index, false)
+    if (value === undefined) {
+      // unsetting
+      if (pos !== -1) {
+        // remove item from bit array and array itself
+        this._unsetInternalPos(pos)
+        this._unsetBit(index)
+        this._changedLength = true
+        this._changedData = true
+      }
+    } else {
+      let needsSort = false
+      if (pos === -1) {
+        pos = this._data.length
+        this._setBit(index)
+        this._changedData = true
+      } else {
+        needsSort = true
+      }
+      this._setInternalPos(pos, index, value, needsSort)
+      this._changedLength = true
+    }
+  }
+
+  unset (index) {
+    this.set(index, undefined)
+  }
+
+  get (index) {
+    this._sortData()
+    const pos = this._internalPositionFor(index, true)
+    if (pos === -1) {
+      return undefined
+    }
+    return this._data[pos][1]
+  }
+
+  push (value) {
+    this.set(this.length, value)
+    return this.length
+  }
+
+  get length () {
+    this._sortData()
+    if (this._changedLength) {
+      const last = this._data[this._data.length - 1]
+      this._length = last ? last[0] + 1 : 0
+      this._changedLength = false
+    }
+    return this._length
+  }
+
+  forEach (iterator) {
+    let i = 0
+    while(i < this.length) {
+      iterator(this.get(i), i, this)
+      i++
+    }
+  }
+
+  map (iterator) {
+    let i = 0
+    let mapped = new Array(this.length)
+    while(i < this.length) {
+      mapped[i] = iterator(this.get(i), i, this)
+      i++
+    }
+    return mapped
+  }
+
+  reduce (reducer, initialValue) {
+    let i = 0
+    let acc = initialValue
+    while(i < this.length) {
+      const value = this.get(i)
+      acc = reducer(acc, value, i)
+      i++
+    }
+    return acc
+  }
+
+  find (finder) {
+    let i = 0, found, last
+    while ((i < this.length) && !found) {
+      last = this.get(i)
+      found = finder(last)
+      i++
+    }
+    return found ? last : undefined
+  }
+
+  _internalPositionFor (index, noCreate) {
+    const bytePos = this._bytePosFor(index, noCreate)
+    if (bytePos >= this._bitArrays.length) {
+      return -1
+    }
+    const byte = this._bitArrays[bytePos]
+    const bitPos = index - bytePos * BITS_PER_BYTE
+    const exists = (byte & (1 << bitPos)) > 0
+    if (!exists) {
+      return -1
+    }
+    const previousPopCount = this._bitArrays.slice(0, bytePos).reduce(popCountReduce, 0)
+
+    const mask = ~(0xffffffff << (bitPos + 1))
+    const bytePopCount = popCount(byte & mask)
+    const arrayPos = previousPopCount + bytePopCount - 1
+    return arrayPos
+  }
+
+  _bytePosFor (index, noCreate) {
+    const bytePos = Math.floor(index / BITS_PER_BYTE)
+    const targetLength = bytePos + 1
+    while (!noCreate && this._bitArrays.length < targetLength) {
+      this._bitArrays.push(0)
+    }
+    return bytePos
+  }
+
+  _setBit (index) {
+    const bytePos = this._bytePosFor(index, false)
+    this._bitArrays[bytePos] |= (1 << (index - (bytePos * BITS_PER_BYTE)))
+  }
+
+  _unsetBit(index) {
+    const bytePos = this._bytePosFor(index, false)
+    this._bitArrays[bytePos] &= ~(1 << (index - (bytePos * BITS_PER_BYTE)))
+  }
+
+  _setInternalPos(pos, index, value, needsSort) {
+    const data =this._data
+    const elem = [index, value]
+    if (needsSort) {
+      this._sortData()
+      data[pos] = elem
+    } else {
+      // new element. just shove it into the array
+      // but be nice about where we shove it
+      // in order to make sorting it later easier
+      if (data.length) {
+        if (data[data.length - 1][0] >= index) {
+          data.push(elem)
+        } else if (data[0][0] <= index) {
+          data.unshift(elem)
+        } else {
+          const randomIndex = Math.round(data.length / 2)
+          this._data = data.slice(0, randomIndex).concat(elem).concat(data.slice(randomIndex))
+        }
+      } else {
+        this._data.push(elem)
+      }
+      this._changedData = true
+      this._changedLength = true
+    }
+  }
+
+  _unsetInternalPos (pos) {
+    this._data.splice(pos, 1)
+  }
+
+  _sortData () {
+    if (this._changedData) {
+      this._data.sort(sortInternal)
+    }
+
+    this._changedData = false
+  }
+
+  bitField () {
+    const bytes = []
+    let pendingBitsForResultingByte = 8
+    let pendingBitsForNewByte = 0
+    let resultingByte = 0
+    let newByte
+    const pending = this._bitArrays.slice()
+    while (pending.length || pendingBitsForNewByte) {
+      if (pendingBitsForNewByte === 0) {
+        newByte = pending.shift()
+        pendingBitsForNewByte = 7
+      }
+
+      const usingBits = Math.min(pendingBitsForNewByte, pendingBitsForResultingByte)
+      const mask = ~(0b11111111 << usingBits)
+      const masked = newByte & mask
+      resultingByte |= masked << (8 - pendingBitsForResultingByte)
+      newByte = newByte >>> usingBits
+      pendingBitsForNewByte -= usingBits
+      pendingBitsForResultingByte -= usingBits
+
+      if (!pendingBitsForResultingByte || (!pendingBitsForNewByte && !pending.length)) {
+        bytes.push(resultingByte)
+        resultingByte = 0
+        pendingBitsForResultingByte = 8
+      }
+    }
+
+    // remove trailing zeroes
+    for(var i = bytes.length - 1; i > 0; i--) {
+      const value = bytes[i]
+      if (value === 0) {
+        bytes.pop()
+      } else {
+        break
+      }
+    }
+
+    return bytes
+  }
+
+  compactArray () {
+    this._sortData()
+    return this._data.map(valueOnly)
+  }
+}
+
+function popCountReduce (count, byte) {
+  return count + popCount(byte)
+}
+
+function popCount(_v) {
+  let v = _v
+  v = v - ((v >> 1) & 0x55555555)                    // reuse input as temporary
+  v = (v & 0x33333333) + ((v >> 2) & 0x33333333)     // temp
+  return ((v + (v >> 4) & 0xF0F0F0F) * 0x1010101) >> 24
+}
+
+function sortInternal (a, b) {
+  return a[0] - b[0]
+}
+
+function valueOnly (elem) {
+  return elem[1]
+}
 
 /***/ }),
 
@@ -33776,9 +39560,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.uploadTextIPFS = exports.uploadFileIPFS = void 0;
+exports.uploadTextIPFS = exports.uploadFileIPFS = exports.getCarFile = void 0;
 const ipfs_http_client_1 = __nccwpck_require__(4993);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
+const fs_2 = __nccwpck_require__(7094);
+const fs_3 = __nccwpck_require__(2689);
 // For more information about the IPFS API, see: https://www.npmjs.com/package/ipfs-http-client
 function getClient(credentials) {
     const auth = "Basic " +
@@ -33793,13 +39579,26 @@ function getClient(credentials) {
     });
     return client;
 }
+//takes in filePath, returns car file
+function getCarFile(filePath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const carFileName = "carFile.car";
+        yield (0, fs_2.packToFs)({
+            input: filePath,
+            output: carFileName,
+            blockstore: new fs_3.FsBlockStore()
+        });
+        return fs_1.default.readFileSync(carFileName);
+    });
+}
+exports.getCarFile = getCarFile;
 function uploadFileIPFS(filePath, credentials, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             const client = getClient(credentials);
             /* upload the file */
             console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-            const file = fs_1.default.readFileSync(filePath);
+            const file = yield getCarFile(filePath);
             const added = yield client.add(file);
             console.log("File uploaded to IPFS:", added.path);
             return added.path;
