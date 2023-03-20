@@ -1722,7 +1722,7 @@ ip-regex@^4.0.0:
   resolved "https://registry.yarnpkg.com/ip-regex/-/ip-regex-4.3.0.tgz#687275ab0f57fa76978ff8f4dddc8a23d5990db5"
   integrity sha512-B9ZWJxHHOHUhUjCPrMpLD4xEq35bUTClHM1S6CBU5ixQnkZmwipwgc96vAd7AAGM9TGHvJR+Uss+/Ak6UphK+Q==
 
-ipfs-car@^0.9.2:
+ipfs-car@0.9.2:
   version "0.9.2"
   resolved "https://registry.yarnpkg.com/ipfs-car/-/ipfs-car-0.9.2.tgz#0b7431004afedafb6958dc7a02a327b7e57ce939"
   integrity sha512-OUKgQqCN9C16eyu9OSOXe2CyRUL/jemWDODfALihvwRHfLLU6tKQVb8rhjhheWhQ1InlFBMgfIiLNxGpUSqOXA==
