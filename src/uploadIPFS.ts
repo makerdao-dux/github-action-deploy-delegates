@@ -3,8 +3,9 @@ import { Credentials } from "./credentials";
 import fs from "fs";
 import { packToFs } from 'ipfs-car/pack/fs';
 import { FsBlockStore } from 'ipfs-car/blockstore/fs';
-import { packToBlob } from 'ipfs-car/pack/blob';
-import { MemoryBlockStore } from 'ipfs-car/blockstore/memory';
+import { Web3Storage } from 'web3.storage';
+import { CarReader } from '@ipld/car';
+import { createReadStream } from 'fs';
 
 // For more information about the IPFS API, see: https://www.npmjs.com/package/ipfs-http-client
 function getClient(credentials: Credentials) {
@@ -26,51 +27,45 @@ function getClient(credentials: Credentials) {
   return client;
 }
 
-//we use the below two functions to generate the IPFS CID before
+//we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
-//This way we ensure the CID is the same
-//across different pinning services
+//This way we ensure the CID is the same across different pinning
+//services, and as the CID generated locally.
 //see more info here: https://web3.storage/docs/how-tos/work-with-car-files/
-
-//takes in filePath, returns car file Buffer
-export async function filePathToCarBuffer(filePath: string) {
+export async function filePathToCar(filePath: string): Promise<CarReader> {
   const carFileName = `${filePath}.car`;
   await packToFs({
     input: filePath,
     output: carFileName,
     blockstore: new FsBlockStore()
   });
-  return fs.readFileSync(carFileName);
-}
-
-//takes in string, retruns car file blob
-export async function contentToCarBlob(content: string) {
-  const { root, car } = await packToBlob({
-    input: content,
-    blockstore: new MemoryBlockStore()
-  });
-  return { cid: root.toString(), car };
+  const inStream = createReadStream(carFileName);
+  const carReader = await CarReader.fromIterable(inStream);
+  console.log(`CID generated locally from ${carFileName}: `,
+    (await carReader.getRoots()).toString());
+  return carReader;
 }
 
 
 export async function uploadFileIPFS(
   filePath: string,
-  credentials: Credentials, 
+  token: string, 
   retries: number = 3
 ): Promise<string> {
   try {
-    const client = getClient(credentials);
+    const client = new Web3Storage({ token });
+    //const client = getClient(credentials);
     /* upload the file */
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-    const buffer = await filePathToCarBuffer(filePath);
-    const added = await client.add(buffer);
-    console.log("File uploaded to IPFS:", added.path);
+    const car = await filePathToCar(filePath);
+    const added = await client.putCar(car);
+    console.log("File uploaded to IPFS:", added);
 
-    return added.path;
+    return added;
   } catch(e) {
     if (retries > 0) {
       console.log('Retrying upload', retries);
-      return uploadFileIPFS(filePath, credentials, retries - 1);
+      return uploadFileIPFS(filePath, token, retries - 1);
     } else {
       throw e;
     }
@@ -79,16 +74,14 @@ export async function uploadFileIPFS(
 
 export async function uploadTextIPFS(
   text: string,
-  credentials: Credentials
+  token: string,
 ): Promise<string> {
-  const client = getClient(credentials);
-  const {cid, car} = await contentToCarBlob(text);
-  console.log('final CID generated locally:', cid);
-  /* upload the file */
-  console.log("Uploading text to IPFS...", text.substring(0, 100) + "...");
-  const added = await client.add(car, {
-    pin: true,
-  });
-  console.log("Text uploaded to IPFS:", added.path);
-  return added.path;
+  const client = new Web3Storage({ token });
+  //const client = getClient(credentials);
+  const textFile = 'textFile';
+  fs.writeFileSync(textFile, text);
+  const car = await filePathToCar(textFile);
+  const added = await client.putCar(car);
+  console.log('final CID generated locally:', added);
+  return added;
 }

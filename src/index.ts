@@ -1,6 +1,6 @@
 import * as core from "@actions/core";
 // import github from "@actions/github";
-import { Credentials } from "./credentials";
+// import { Credentials } from "./credentials";
 import { parseDelegates } from "./parseDelegates";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
 import fs from 'fs';
@@ -13,10 +13,7 @@ async function run() {
     const tagsPath = core.getInput("tags-file");
     const INFURA_ID = core.getInput("infura-id");
     const INFURA_SECRET_KEY = core.getInput("infura-secret");
-    const credentials: Credentials = {
-      INFURA_ID,
-      INFURA_SECRET_KEY,
-    };
+    const token = core.getInput("web3-storage-token");
 
     const data = await parseDelegates(delegatesFolder, tagsPath);
 
@@ -31,7 +28,7 @@ async function run() {
 
         try {
           if (image) {
-            const hashImage = await uploadFileIPFS(image, credentials);
+            const hashImage = await uploadFileIPFS(image, token);
             delegate.image = hashImage;
           }
         } catch (e: any) {
@@ -54,7 +51,7 @@ async function run() {
         try {
 
           if (image) {
-            const hashImage = await uploadFileIPFS(image, credentials);
+            const hashImage = await uploadFileIPFS(image, token);
             votingCommittee.image = hashImage;
           }
         } catch (e: any) {
@@ -79,7 +76,7 @@ async function run() {
 
     const uploadedHash = await uploadTextIPFS(
       fileContents,
-      credentials
+      token
     );
     console.log("Uploaded hash", uploadedHash);
 
