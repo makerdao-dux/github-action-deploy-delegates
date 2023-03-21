@@ -82,6 +82,6 @@ export async function uploadTextIPFS(
   fs.writeFileSync(textFile, text);
   const car = await filePathToCar(textFile);
   const added = await client.putCar(car);
-  console.log('final CID generated locally:', added);
+  console.log('Text uploaded to IPFS: ', added);
   return added;
 }
