@@ -11687,90 +11687,6 @@ module.exports = {
 
 /***/ }),
 
-/***/ 2689:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.FsBlockStore = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const os_1 = __importDefault(__nccwpck_require__(2037));
-const multiformats_1 = __nccwpck_require__(5978);
-const blockstore_core_1 = __nccwpck_require__(6226);
-class FsBlockStore extends blockstore_core_1.BaseBlockstore {
-    constructor() {
-        super();
-        this.path = `${os_1.default.tmpdir()}/${(parseInt(String(Math.random() * 1e9), 10)).toString() + Date.now()}`;
-        this._opened = false;
-    }
-    async _open() {
-        if (this._opening) {
-            await this._opening;
-        }
-        else {
-            this._opening = fs_1.default.promises.mkdir(this.path);
-            await this._opening;
-            this._opened = true;
-        }
-    }
-    async put(cid, bytes) {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cidStr = cid.toString();
-        const location = `${this.path}/${cidStr}`;
-        await fs_1.default.promises.writeFile(location, bytes);
-    }
-    async get(cid) {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cidStr = cid.toString();
-        const location = `${this.path}/${cidStr}`;
-        const bytes = await fs_1.default.promises.readFile(location);
-        return bytes;
-    }
-    async has(cid) {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cidStr = cid.toString();
-        const location = `${this.path}/${cidStr}`;
-        try {
-            await fs_1.default.promises.access(location);
-            return true;
-        }
-        catch (err) {
-            return false;
-        }
-    }
-    async *blocks() {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cids = await fs_1.default.promises.readdir(this.path);
-        for (const cidStr of cids) {
-            const location = `${this.path}/${cidStr}`;
-            const bytes = await fs_1.default.promises.readFile(location);
-            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
-        }
-    }
-    async close() {
-        if (this._opened) {
-            await fs_1.default.promises.rm(this.path, { recursive: true });
-        }
-        this._opened = false;
-    }
-}
-exports.FsBlockStore = FsBlockStore;
-
-
-/***/ }),
-
 /***/ 7913:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -11814,7 +11730,47 @@ exports.MemoryBlockStore = MemoryBlockStore;
 
 /***/ }),
 
-/***/ 1563:
+/***/ 2510:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.packToBlob = void 0;
+const blob_1 = __nccwpck_require__(9620);
+const it_all_1 = __importDefault(__nccwpck_require__(5810));
+const memory_1 = __nccwpck_require__(7913);
+const index_1 = __nccwpck_require__(8163);
+async function packToBlob({ input, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves }) {
+    const blockstore = userBlockstore ? userBlockstore : new memory_1.MemoryBlockStore();
+    const { root, out } = await (0, index_1.pack)({
+        input,
+        blockstore,
+        hasher,
+        maxChunkSize,
+        maxChildrenPerNode,
+        wrapWithDirectory,
+        rawLeaves
+    });
+    const carParts = await (0, it_all_1.default)(out);
+    if (!userBlockstore) {
+        await blockstore.close();
+    }
+    const car = new blob_1.Blob(carParts, {
+        // https://www.iana.org/assignments/media-types/application/vnd.ipld.car
+        type: 'application/vnd.ipld.car',
+    });
+    return { root, car };
+}
+exports.packToBlob = packToBlob;
+
+
+/***/ }),
+
+/***/ 4536:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -11835,7 +11791,7 @@ exports.unixfsImporterOptionsDefault = {
 
 /***/ }),
 
-/***/ 7094:
+/***/ 8163:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -11844,120 +11800,103 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.packToFs = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const os_1 = __importDefault(__nccwpck_require__(2037));
-const path_1 = __importDefault(__nccwpck_require__(1017));
-const move_file_1 = __importDefault(__nccwpck_require__(5941));
-const stream_1 = __nccwpck_require__(1690);
-const fs_2 = __nccwpck_require__(2689);
-async function packToFs({ input, output, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves, customStreamSink }) {
-    const blockstore = userBlockstore ? userBlockstore : new fs_2.FsBlockStore();
-    const location = output || `${os_1.default.tmpdir()}/${(parseInt(String(Math.random() * 1e9), 10)).toString() + Date.now()}`;
-    const writable = fs_1.default.createWriteStream(location);
-    const { root } = await (0, stream_1.packToStream)({
-        input,
-        writable,
-        blockstore,
-        hasher,
-        maxChunkSize,
-        maxChildrenPerNode,
-        wrapWithDirectory,
-        rawLeaves,
-        customStreamSink
-    });
-    if (!userBlockstore) {
-        await blockstore.close();
-    }
-    // Move to work dir
-    if (!output) {
-        const basename = typeof input === 'string' ? path_1.default.parse(path_1.default.basename(input)).name : root.toString();
-        const filename = `${basename}.car`;
-        await (0, move_file_1.default)(location, `${process.cwd()}/${filename}`);
-        return { root, filename };
-    }
-    return { root, filename: output };
-}
-exports.packToFs = packToFs;
-
-
-/***/ }),
-
-/***/ 1690:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.packToStream = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const path_1 = __importDefault(__nccwpck_require__(1017));
-const stream_1 = __nccwpck_require__(2781);
+exports.pack = void 0;
 const it_last_1 = __importDefault(__nccwpck_require__(7123));
 const it_pipe_1 = __importDefault(__nccwpck_require__(7185));
 const car_1 = __nccwpck_require__(8802);
 const ipfs_unixfs_importer_1 = __nccwpck_require__(1626);
-const normalise_input_multiple_1 = __nccwpck_require__(9285);
-const glob_source_js_1 = __importDefault(__nccwpck_require__(2524));
+const normalise_input_1 = __nccwpck_require__(7717);
 const memory_1 = __nccwpck_require__(7913);
-const constants_1 = __nccwpck_require__(1563);
-// Node version of toCar with Node Stream Writable
-async function packToStream({ input, writable, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves, customStreamSink }) {
+const constants_1 = __nccwpck_require__(4536);
+async function pack({ input, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves }) {
     if (!input || (Array.isArray(input) && !input.length)) {
-        throw new Error('given input could not be parsed correctly');
+        throw new Error('missing input file(s)');
     }
-    input = typeof input === 'string' ? [input] : input;
     const blockstore = userBlockstore ? userBlockstore : new memory_1.MemoryBlockStore();
     // Consume the source
-    const rootEntry = await (0, it_last_1.default)((0, it_pipe_1.default)(legacyGlobSource(input), source => (0, normalise_input_multiple_1.normaliseInput)(source), (source) => (0, ipfs_unixfs_importer_1.importer)(source, blockstore, {
+    const rootEntry = await (0, it_last_1.default)((0, it_pipe_1.default)((0, normalise_input_1.getNormaliser)(input), (source) => (0, ipfs_unixfs_importer_1.importer)(source, blockstore, {
         ...constants_1.unixfsImporterOptionsDefault,
         hasher: hasher || constants_1.unixfsImporterOptionsDefault.hasher,
         maxChunkSize: maxChunkSize || constants_1.unixfsImporterOptionsDefault.maxChunkSize,
         maxChildrenPerNode: maxChildrenPerNode || constants_1.unixfsImporterOptionsDefault.maxChildrenPerNode,
         wrapWithDirectory: wrapWithDirectory === false ? false : constants_1.unixfsImporterOptionsDefault.wrapWithDirectory,
         rawLeaves: rawLeaves == null ? constants_1.unixfsImporterOptionsDefault.rawLeaves : rawLeaves
-    }), customStreamSink ? customStreamSink : (sources) => sources));
+    })));
     if (!rootEntry || !rootEntry.cid) {
         throw new Error('given input could not be parsed correctly');
     }
     const root = rootEntry.cid;
-    const { writer, out } = await car_1.CarWriter.create([root]);
-    stream_1.Readable.from(out).pipe(writable);
-    for await (const block of blockstore.blocks()) {
-        await writer.put(block);
-    }
-    await writer.close();
-    if (!userBlockstore) {
-        await blockstore.close();
-    }
-    return { root };
-}
-exports.packToStream = packToStream;
-/**
- * This function replicates the old behaviour of globSource to not introduce a
- * breaking change.
- *
- * TODO: figure out what the breaking change will be.
- */
-async function* legacyGlobSource(input) {
-    for await (const p of input) {
-        const resolvedPath = path_1.default.resolve(p);
-        const stat = await fs_1.default.promises.stat(resolvedPath);
-        const fileName = path_1.default.basename(resolvedPath);
-        if (stat.isDirectory()) {
-            yield { path: fileName };
-            for await (const candidate of (0, glob_source_js_1.default)(resolvedPath, '**/*')) {
-                yield { ...candidate, path: path_1.default.join(fileName, candidate.path) };
+    const { writer, out: carOut } = await car_1.CarWriter.create([root]);
+    const carOutIter = carOut[Symbol.asyncIterator]();
+    let writingPromise;
+    const writeAll = async () => {
+        for await (const block of blockstore.blocks()) {
+            // `await` will block until all bytes in `carOut` are consumed by the user
+            // so we have backpressure here
+            await writer.put(block);
+        }
+        await writer.close();
+        if (!userBlockstore) {
+            await blockstore.close();
+        }
+    };
+    const out = {
+        [Symbol.asyncIterator]() {
+            if (writingPromise != null) {
+                throw new Error('Multiple iterator not supported');
             }
+            // don't start writing until the user starts consuming the iterator
+            writingPromise = writeAll();
+            return {
+                async next() {
+                    const result = await carOutIter.next();
+                    if (result.done) {
+                        await writingPromise; // any errors will propagate from here
+                    }
+                    return result;
+                }
+            };
         }
-        else {
-            yield { path: fileName, content: fs_1.default.createReadStream(resolvedPath) };
-        }
+    };
+    return { root, out };
+}
+exports.pack = pack;
+
+
+/***/ }),
+
+/***/ 7717:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getNormaliser = void 0;
+const normalise_input_single_1 = __nccwpck_require__(4304);
+const normalise_input_multiple_1 = __nccwpck_require__(9285);
+function isBytes(obj) {
+    return ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer;
+}
+function isBlob(obj) {
+    return Boolean(obj.constructor) &&
+        (obj.constructor.name === 'Blob' || obj.constructor.name === 'File') &&
+        typeof obj.stream === 'function';
+}
+function isSingle(input) {
+    return typeof input === 'string' || input instanceof String || isBytes(input) || isBlob(input) || '_readableState' in input;
+}
+/**
+ * Get a single or multiple normaliser depending on the input.
+ */
+function getNormaliser(input) {
+    if (isSingle(input)) {
+        return (0, normalise_input_single_1.normaliseInput)(input);
+    }
+    else {
+        return (0, normalise_input_multiple_1.normaliseInput)(input);
     }
 }
+exports.getNormaliser = getNormaliser;
 
 
 /***/ }),
@@ -11973,7 +11912,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 var reader = __nccwpck_require__(9936);
 var indexer = __nccwpck_require__(7250);
 var iterator = __nccwpck_require__(1378);
-var writer = __nccwpck_require__(73);
+var writer = __nccwpck_require__(7537);
 var indexedReader = __nccwpck_require__(6822);
 
 
@@ -12871,7 +12810,7 @@ exports.__browser = __browser;
 
 /***/ }),
 
-/***/ 73:
+/***/ 7537:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -15935,163 +15874,6 @@ exports.Data = Data;
 exports.Metadata = Metadata;
 exports.UnixTime = UnixTime;
 exports["default"] = $root;
-
-
-/***/ }),
-
-/***/ 7814:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = (__nccwpck_require__(7147).promises)
-const path = __nccwpck_require__(1017)
-const minimatch = __nccwpck_require__(3973)
-
-/**
- * @typedef {string} Glob
- * @typedef {object} OptionsExt
- * @property {string} [cwd=process.cwd()]
- * @property {boolean} [absolute=false] - If true produces absolute paths
- * @property {boolean} [nodir] - If true yields file paths and skip directories
- *
- * @typedef {OptionsExt & minimatch.IOptions} Options
- */
-
-/**
- * Async iterable filename pattern matcher
- *
- * @param {string} dir
- * @param {string} pattern
- * @param {Options} [options]
- * @returns {AsyncIterable<string>}
- */
-async function * glob (dir, pattern, options = {}) {
-  const absoluteDir = path.resolve(dir)
-  const relativeDir = path.relative(options.cwd || process.cwd(), dir)
-
-  const stats = await fs.stat(absoluteDir)
-
-  if (stats.isDirectory()) {
-    for await (const entry of _glob(absoluteDir, '', pattern, options)) {
-      yield entry
-    }
-
-    return
-  }
-
-  if (minimatch(relativeDir, pattern, options)) {
-    yield options.absolute ? absoluteDir : relativeDir
-  }
-}
-
-/**
- * @param {string} base
- * @param {string} dir
- * @param {Glob} pattern
- * @param {Options} options
- * @returns {AsyncIterable<string>}
- */
-async function * _glob (base, dir, pattern, options) {
-  for await (const entry of await fs.opendir(path.join(base, dir))) {
-    const relativeEntryPath = path.join(dir, entry.name)
-    const absoluteEntryPath = path.join(base, dir, entry.name)
-
-    let match = minimatch(relativeEntryPath, pattern, options)
-
-    const isDirectory = entry.isDirectory()
-
-    if (isDirectory && options.nodir) {
-      match = false
-    }
-
-    if (match) {
-      yield options.absolute ? absoluteEntryPath : relativeEntryPath
-    }
-
-    if (isDirectory) {
-      yield * _glob(base, relativeEntryPath, pattern, options)
-    }
-  }
-}
-
-module.exports = glob
-
-
-/***/ }),
-
-/***/ 2524:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fsp = (__nccwpck_require__(7147).promises)
-const fs = __nccwpck_require__(7147)
-const glob = __nccwpck_require__(7814)
-const Path = __nccwpck_require__(1017)
-const errCode = __nccwpck_require__(2997)
-
-/**
- * Create an async iterator that yields paths that match requested glob pattern
- *
- * @param {string} cwd - The directory to start matching the pattern in
- * @param {string} pattern - Glob pattern to match
- * @param {import('../types').GlobSourceOptions} [options] - Optional options
- * @returns {AsyncGenerator<import('../types').GlobSourceResult, void, unknown>} File objects that match glob
- */
-module.exports = async function * globSource (cwd, pattern, options) {
-  options = options || {}
-
-  if (typeof pattern !== 'string') {
-    throw errCode(
-      new Error('Pattern must be a string'),
-      'ERR_INVALID_PATH',
-      { pattern }
-    )
-  }
-
-  if (!Path.isAbsolute(cwd)) {
-    cwd = Path.resolve(process.cwd(), cwd)
-  }
-
-  const globOptions = Object.assign({}, {
-    nodir: false,
-    realpath: false,
-    absolute: true,
-    dot: Boolean(options.hidden),
-    follow: options.followSymlinks != null ? options.followSymlinks : true
-  })
-
-  for await (const p of glob(cwd, pattern, globOptions)) {
-    const stat = await fsp.stat(p)
-
-    let mode = options.mode
-
-    if (options.preserveMode) {
-      mode = stat.mode
-    }
-
-    let mtime = options.mtime
-
-    if (options.preserveMtime) {
-      mtime = stat.mtime
-    }
-
-    yield {
-      path: toPosix(p.replace(cwd, '')),
-      content: stat.isFile() ? fs.createReadStream(p) : undefined,
-      mode,
-      mtime
-    }
-  }
-}
-
-/**
- * @param {string} path
- */
-const toPosix = path => path.replace(/\\/g, '/')
 
 
 /***/ }),
@@ -21911,82 +21693,6 @@ function regExpEscape (s) {
 
 /***/ }),
 
-/***/ 5941:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const path = __nccwpck_require__(1017);
-const fs = __nccwpck_require__(7147);
-const pathExists = __nccwpck_require__(6978);
-
-const fsP = fs.promises;
-
-module.exports = async (source, destination, options) => {
-	if (!source || !destination) {
-		throw new TypeError('`source` and `destination` file required');
-	}
-
-	options = {
-		overwrite: true,
-		...options
-	};
-
-	if (!options.overwrite && await pathExists(destination)) {
-		throw new Error(`The destination file exists: ${destination}`);
-	}
-
-	await fsP.mkdir(path.dirname(destination), {
-		recursive: true,
-		mode: options.directoryMode
-	});
-
-	try {
-		await fsP.rename(source, destination);
-	} catch (error) {
-		if (error.code === 'EXDEV') {
-			await fsP.copyFile(source, destination);
-			await fsP.unlink(source);
-		} else {
-			throw error;
-		}
-	}
-};
-
-module.exports.sync = (source, destination, options) => {
-	if (!source || !destination) {
-		throw new TypeError('`source` and `destination` file required');
-	}
-
-	options = {
-		overwrite: true,
-		...options
-	};
-
-	if (!options.overwrite && fs.existsSync(destination)) {
-		throw new Error(`The destination file exists: ${destination}`);
-	}
-
-	fs.mkdirSync(path.dirname(destination), {
-		recursive: true,
-		mode: options.directoryMode
-	});
-
-	try {
-		fs.renameSync(source, destination);
-	} catch (error) {
-		if (error.code === 'EXDEV') {
-			fs.copyFileSync(source, destination);
-			fs.unlinkSync(source);
-		} else {
-			throw error;
-		}
-	}
-};
-
-
-/***/ }),
-
 /***/ 5653:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -25682,37 +25388,6 @@ module.exports.AbortError = AbortError;
 
 /***/ }),
 
-/***/ 6978:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const fs = __nccwpck_require__(7147);
-const {promisify} = __nccwpck_require__(3837);
-
-const pAccess = promisify(fs.access);
-
-module.exports = async path => {
-	try {
-		await pAccess(path);
-		return true;
-	} catch (_) {
-		return false;
-	}
-};
-
-module.exports.sync = path => {
-	try {
-		fs.accessSync(path);
-		return true;
-	} catch (_) {
-		return false;
-	}
-};
-
-
-/***/ }),
-
 /***/ 6916:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -25749,7 +25424,7 @@ protobuf.BufferReader = __nccwpck_require__(339);
 // Utility
 protobuf.util         = __nccwpck_require__(1241);
 protobuf.rpc          = __nccwpck_require__(6444);
-protobuf.roots        = __nccwpck_require__(2917);
+protobuf.roots        = __nccwpck_require__(73);
 protobuf.configure    = configure;
 
 /* istanbul ignore next */
@@ -26247,7 +25922,7 @@ BufferReader._configure();
 
 /***/ }),
 
-/***/ 2917:
+/***/ 73:
 /***/ ((module) => {
 
 "use strict";
@@ -34966,7 +34641,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 
 var reader = __nccwpck_require__(1053);
 var indexer = __nccwpck_require__(4450);
-var iterator = __nccwpck_require__(6146);
+var iterator = __nccwpck_require__(1563);
 var writer = __nccwpck_require__(7561);
 var indexedReader = __nccwpck_require__(4547);
 
@@ -35518,7 +35193,7 @@ exports.create = create;
 
 /***/ }),
 
-/***/ 6146:
+/***/ 1563:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -36193,7 +35868,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.unpackStream = exports.unpack = void 0;
 const browser_readablestream_to_it_1 = __importDefault(__nccwpck_require__(664));
-const iterator_1 = __nccwpck_require__(6146);
+const iterator_1 = __nccwpck_require__(1563);
 const ipfs_unixfs_exporter_1 = __nccwpck_require__(2190);
 const verifying_get_only_blockstore_1 = __nccwpck_require__(2322);
 const memory_1 = __nccwpck_require__(3204);
@@ -36827,36 +36502,30 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.uploadTextIPFS = exports.uploadFileIPFS = exports.filePathToCar = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const fs_2 = __nccwpck_require__(7094);
-const fs_3 = __nccwpck_require__(2689);
+exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
 const car_1 = __nccwpck_require__(2805);
-const fs_4 = __nccwpck_require__(7147);
 const nft_storage_1 = __nccwpck_require__(9510);
+const blob_1 = __nccwpck_require__(2510);
+const memory_1 = __nccwpck_require__(7913);
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
 //This way we ensure the CID is the same across different pinning
 //services, and as the CID generated locally.
 //see more info here: https://web3.storage/docs/how-tos/work-with-car-files/
-function filePathToCar(filePath) {
+function dataToCar(filePath) {
     return __awaiter(this, void 0, void 0, function* () {
-        const carFileName = `${filePath}.car`;
-        yield (0, fs_2.packToFs)({
+        const { car } = yield (0, blob_1.packToBlob)({
             input: filePath,
-            output: carFileName,
-            blockstore: new fs_3.FsBlockStore()
+            blockstore: new memory_1.MemoryBlockStore()
         });
-        const inStream = (0, fs_4.createReadStream)(carFileName);
-        return car_1.CarReader.fromIterable(inStream);
+        const arrayBuffer = yield car.arrayBuffer();
+        const array = new Uint8Array(arrayBuffer);
+        return car_1.CarReader.fromBytes(array);
     });
 }
-exports.filePathToCar = filePathToCar;
+exports.dataToCar = dataToCar;
 //upload car file to both web3.storage and nft.storage
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -36884,7 +36553,6 @@ function uploadCarFileIPFS(car, tokens) {
                 throw new Error('nftStorage CID differs from locally generated CID');
             }
         }
-        //update to return CID
         return localCID;
     });
 }
@@ -36892,7 +36560,8 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-            const car = yield filePathToCar(filePath);
+            //update below
+            const car = yield dataToCar(filePath);
             return uploadCarFileIPFS(car, tokens);
         }
         catch (e) {
@@ -36909,10 +36578,7 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
 exports.uploadFileIPFS = uploadFileIPFS;
 function uploadTextIPFS(text, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        //const client = getClient(credentials);
-        const textFile = 'textFile';
-        fs_1.default.writeFileSync(textFile, text);
-        const car = yield filePathToCar(textFile);
+        const car = yield dataToCar(text);
         return uploadCarFileIPFS(car, tokens);
     });
 }

@@ -1,7 +1,7 @@
 import {expect, test} from '@jest/globals'
 import { parseDelegates } from '../src/parseDelegates';
 import { parseVotingCommittees } from '../src/parseVotingCommittees';
-import { filePathToCar } from '../src/uploadIPFS';
+import { dataToCar } from '../src/uploadIPFS';
 import { promises as fs } from 'fs';
 import { CarReader } from '@ipld/car';
 
@@ -16,9 +16,7 @@ test('generate car file from file', async () => {
     null,
     2
   );
-  const testFileName = 'testFile';
-  await fs.writeFile(testFileName, fileContents);
-  const carFile = await filePathToCar(testFileName);
-  console.log('carFile', carFile);
-    //expect this to be CarReader type
+  const car = await dataToCar(fileContents);
+  const CID = (await car.getRoots()).toString();
+  expect(CID.length > 45).toBe(true);
 });

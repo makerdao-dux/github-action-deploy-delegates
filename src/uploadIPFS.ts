@@ -6,21 +6,22 @@ import { CarReader } from '@ipld/car';
 import { createReadStream } from 'fs';
 import { NFTStorage } from 'nft.storage';
 import { API_TOKENS } from './apiTokens';
+import { packToBlob } from 'ipfs-car/pack/blob';
+import { MemoryBlockStore } from 'ipfs-car/blockstore/memory';
 
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
 //This way we ensure the CID is the same across different pinning
 //services, and as the CID generated locally.
 //see more info here: https://web3.storage/docs/how-tos/work-with-car-files/
-export async function filePathToCar(filePath: string): Promise<CarReader> {
-  const carFileName = `${filePath}.car`;
-  await packToFs({
+export async function dataToCar(filePath: string): Promise<CarReader> {
+  const { car } = await packToBlob({
     input: filePath,
-    output: carFileName,
-    blockstore: new FsBlockStore()
+    blockstore: new MemoryBlockStore()
   });
-  const inStream = createReadStream(carFileName);
-  return CarReader.fromIterable(inStream);
+  const arrayBuffer = await car.arrayBuffer();
+  const array = new Uint8Array(arrayBuffer);
+  return CarReader.fromBytes(array);
 }
 
 //upload car file to both web3.storage and nft.storage
@@ -51,7 +52,6 @@ async function uploadCarFileIPFS(car: CarReader, tokens: API_TOKENS){
     }
   }
 
-  //update to return CID
   return localCID;
 }
 
@@ -63,7 +63,8 @@ export async function uploadFileIPFS(
 ): Promise<string> {
   try {
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-    const car = await filePathToCar(filePath);
+    //update below
+    const car = await dataToCar(filePath);
     return uploadCarFileIPFS(car, tokens);
   } catch(e) {
     if (retries > 0) {
@@ -79,9 +80,6 @@ export async function uploadTextIPFS(
   text: string,
   tokens: API_TOKENS, 
 ): Promise<string> {
-  //const client = getClient(credentials);
-  const textFile = 'textFile';
-  fs.writeFileSync(textFile, text);
-  const car = await filePathToCar(textFile);
+  const car = await dataToCar(text);
   return uploadCarFileIPFS(car, tokens);
 }
