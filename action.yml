@@ -18,10 +18,16 @@ inputs:
     default: 'governance/delegates/meta/tags.json'
   infura-id:
     description: 'Infura project id'
-    required: true
+    required: false
   infura-secret:
     description: 'Infura API key secret'
-    required: true
+    required: false
+  web3-storage-token:
+    description: 'web3.storage token'
+    required: false
+  nft-storage-token:
+    description: 'nft.storage token'
+    required: false
   output-file:
     description: 'The file that will be added to disk (leave empty for no output file)'
 outputs:
