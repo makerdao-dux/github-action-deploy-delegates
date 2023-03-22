@@ -36,3 +36,4 @@ jobs:
           tags-file: '__tests__/delegates/tags.json'
           output-file: '__tests__/meta/delegates.json'
           web3-storage-token: ${{ secrets.WEB3_STORAGE_TOKEN }}
+          nft-storage-token: ${{ secrets.NFT_STORAGE_TOKEN }}

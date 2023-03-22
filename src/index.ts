@@ -13,7 +13,10 @@ async function run() {
     const tagsPath = core.getInput("tags-file");
     const INFURA_ID = core.getInput("infura-id");
     const INFURA_SECRET_KEY = core.getInput("infura-secret");
-    const token = core.getInput("web3-storage-token");
+    const WEB3_STORAGE_TOKEN = core.getInput("web3-storage-token");
+    const NFT_STORAGE_TOKEN = core.getInput("nft-storage-token");
+    
+    const tokens =  { WEB3_STORAGE_TOKEN, NFT_STORAGE_TOKEN };
 
     const data = await parseDelegates(delegatesFolder, tagsPath);
 
@@ -28,7 +31,7 @@ async function run() {
 
         try {
           if (image) {
-            const hashImage = await uploadFileIPFS(image, token);
+            const hashImage = await uploadFileIPFS(image, tokens);
             delegate.image = hashImage;
           }
         } catch (e: any) {
@@ -51,7 +54,7 @@ async function run() {
         try {
 
           if (image) {
-            const hashImage = await uploadFileIPFS(image, token);
+            const hashImage = await uploadFileIPFS(image, tokens);
             votingCommittee.image = hashImage;
           }
         } catch (e: any) {
@@ -76,7 +79,7 @@ async function run() {
 
     const uploadedHash = await uploadTextIPFS(
       fileContents,
-      token
+      tokens,
     );
     console.log("Uploaded hash", uploadedHash);
 
