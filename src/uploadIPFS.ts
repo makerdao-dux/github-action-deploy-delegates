@@ -2,9 +2,9 @@ import fs from "fs";
 import { packToFs } from 'ipfs-car/pack/fs';
 import { FsBlockStore } from 'ipfs-car/blockstore/fs';
 import { Web3Storage } from 'web3.storage';
-import { CarReader } from '@ipld/car';
+//import { CarReader } from '@ipld/car';
 import { createReadStream } from 'fs';
-import { NFTStorage } from 'nft.storage';
+import { NFTStorage, CarReader } from 'nft.storage';
 import { API_TOKENS } from './apiTokens';
 import { packToBlob } from 'ipfs-car/pack/blob';
 import { MemoryBlockStore } from 'ipfs-car/blockstore/memory';
@@ -14,17 +14,10 @@ import { MemoryBlockStore } from 'ipfs-car/blockstore/memory';
 //This way we ensure the CID is the same across different pinning
 //services, and as the CID generated locally.
 //see more info here: https://web3.storage/docs/how-tos/work-with-car-files/
-export async function dataToCar(filePath: string): Promise<CarReader> {
-  const { car } = await packToBlob({
-    input: filePath,
-    blockstore: new MemoryBlockStore()
-  });
-  console.log('car', car);
-  const arrayBuffer = await car.arrayBuffer();
-  console.log('arrayBuffer', arrayBuffer);
-  const array = new Uint8Array(arrayBuffer);
-  console.log('array', array);
-  return CarReader.fromBytes(array);
+export async function dataToCar(data: string): Promise<CarReader> {
+  const someData = new Blob([data]);
+  const { car } = await NFTStorage.encodeBlob(someData)
+  return car;
 }
 
 //upload car file to both web3.storage and nft.storage
