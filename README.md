@@ -17,6 +17,14 @@ This action analyzes the configured "delegates" folder and parses the data to cr
 
 **Required** The file with the tags mapping/definitions. Default: `governance/delegates/meta/tags.json`.
 
+### `web3-storage-token`
+
+**Optional** web3.storage api token. At least one storage token required.
+
+### `nft-storage-token`
+
+**Optional** nft.storage api token. At least one storage token required.
+
 ### `infura-id`
 
 **Required** Infura IPFS project ID
@@ -42,8 +50,8 @@ uses: makerdao-dux/github-action-deploy-delegates@v1.1.15
 with:
   delegates-folder: "governance/delegates"
   tags-file: "governance/delegates/meta/tags.json"
-  infura-id: ${{ secrets.INFURA_ID }}
-  infura-secret: ${{ secrets.INFURA_KEY }}
+  web3-storage-token: ${{ secrets.WEB3_STORAGE_TOKEN }}
+  nft-storage-token: ${{ secrets.NFT_STORAGE_TOKEN }}
 ```
 
 ### Full example: 
@@ -63,8 +71,8 @@ jobs:
         with:
           delegates-folder: 'governance/delegates'
           tags-file: 'governance/delegates/meta/tags.json'
-          infura-id: ${{ secrets.INFURA_ID }}
-          infura-secret: ${{ secrets.INFURA_KEY }}
+          web3-storage-token: ${{ secrets.WEB3_STORAGE_TOKEN }}
+          nft-storage-token: ${{ secrets.NFT_STORAGE_TOKEN }}
           output-file: 'governance/delegates/data.json'
       # Use the output from the `upload` step
       - name: Get the output hash
