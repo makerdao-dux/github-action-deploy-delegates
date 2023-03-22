@@ -16096,24 +16096,6 @@ const toPosix = path => path.replace(/\\/g, '/')
 
 /***/ }),
 
-/***/ 864:
-/***/ ((module) => {
-
-"use strict";
-
-
-module.exports = value => {
-	if (Object.prototype.toString.call(value) !== '[object Object]') {
-		return false;
-	}
-
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === null || prototype === Object.prototype;
-};
-
-
-/***/ }),
-
 /***/ 5810:
 /***/ ((module) => {
 
@@ -20783,7 +20765,7 @@ module.exports = new Type('tag:yaml.org,2002:timestamp', {
 
 "use strict";
 
-const isOptionObject = __nccwpck_require__(864);
+const isOptionObject = __nccwpck_require__(4089);
 
 const {hasOwnProperty} = Object.prototype;
 const {propertyIsEnumerable} = Object;
@@ -20952,6 +20934,24 @@ module.exports = function (...options) {
 	}
 
 	return merged._;
+};
+
+
+/***/ }),
+
+/***/ 4089:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = value => {
+	if (Object.prototype.toString.call(value) !== '[object Object]') {
+		return false;
+	}
+
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === null || prototype === Object.prototype;
 };
 
 
@@ -36474,8 +36474,6 @@ function run() {
             const delegatesFolder = core.getInput("delegates-folder");
             const delegateVotingCommitteesFolder = core.getInput("voting-committees-folder");
             const tagsPath = core.getInput("tags-file");
-            const INFURA_ID = core.getInput("infura-id");
-            const INFURA_SECRET_KEY = core.getInput("infura-secret");
             const WEB3_STORAGE_TOKEN = core.getInput("web3-storage-token");
             const NFT_STORAGE_TOKEN = core.getInput("nft-storage-token");
             const tokens = { WEB3_STORAGE_TOKEN, NFT_STORAGE_TOKEN };
@@ -36841,23 +36839,6 @@ const web3_storage_1 = __nccwpck_require__(8272);
 const car_1 = __nccwpck_require__(2805);
 const fs_4 = __nccwpck_require__(7147);
 const nft_storage_1 = __nccwpck_require__(9510);
-// For more information about the IPFS API, see: https://www.npmjs.com/package/ipfs-http-client
-// function getClient(credentials: Credentials) {
-//   const auth =
-//     "Basic " +
-//     Buffer.from(
-//       credentials.INFURA_ID + ":" + credentials.INFURA_SECRET_KEY
-//     ).toString("base64");
-//   const client = create({
-//     host: "ipfs.infura.io",
-//     port: 5001,
-//     protocol: "https",
-//     headers: {
-//       authorization: auth,
-//     },
-//   });
-//   return client;
-// }
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
 //This way we ensure the CID is the same across different pinning

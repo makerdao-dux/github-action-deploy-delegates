@@ -11,8 +11,6 @@ async function run() {
     const delegatesFolder = core.getInput("delegates-folder");
     const delegateVotingCommitteesFolder = core.getInput("voting-committees-folder");
     const tagsPath = core.getInput("tags-file");
-    const INFURA_ID = core.getInput("infura-id");
-    const INFURA_SECRET_KEY = core.getInput("infura-secret");
     const WEB3_STORAGE_TOKEN = core.getInput("web3-storage-token");
     const NFT_STORAGE_TOKEN = core.getInput("nft-storage-token");
     

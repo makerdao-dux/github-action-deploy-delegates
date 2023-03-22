@@ -25,14 +25,6 @@ This action analyzes the configured "delegates" folder and parses the data to cr
 
 **Optional** nft.storage api token. At least one storage token required.
 
-### `infura-id`
-
-**Required** Infura IPFS project ID
-
-### `infura-secret`
-
-**Required** Infura IPFS project secret
-
 ### `output-file`
 
 If specified, the path of the file to be written to disk

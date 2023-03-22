@@ -1,5 +1,3 @@
-import { create } from "ipfs-http-client";
-import { Credentials } from "./credentials";
 import fs from "fs";
 import { packToFs } from 'ipfs-car/pack/fs';
 import { FsBlockStore } from 'ipfs-car/blockstore/fs';
@@ -7,32 +5,7 @@ import { Web3Storage } from 'web3.storage';
 import { CarReader } from '@ipld/car';
 import { createReadStream } from 'fs';
 import { NFTStorage } from 'nft.storage';
-
-//todo: move to type file
-type API_TOKENS = {
-  WEB3_STORAGE_TOKEN?: string,
-  NFT_STORAGE_TOKEN?: string
-}
-
-// For more information about the IPFS API, see: https://www.npmjs.com/package/ipfs-http-client
-// function getClient(credentials: Credentials) {
-//   const auth =
-//     "Basic " +
-//     Buffer.from(
-//       credentials.INFURA_ID + ":" + credentials.INFURA_SECRET_KEY
-//     ).toString("base64");
-
-//   const client = create({
-//     host: "ipfs.infura.io",
-//     port: 5001,
-//     protocol: "https",
-//     headers: {
-//       authorization: auth,
-//     },
-//   });
-
-//   return client;
-// }
+import { API_TOKENS } from './apiTokens';
 
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
