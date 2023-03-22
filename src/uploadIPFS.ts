@@ -1,13 +1,7 @@
-import fs from "fs";
-import { packToFs } from 'ipfs-car/pack/fs';
-import { FsBlockStore } from 'ipfs-car/blockstore/fs';
 import { Web3Storage } from 'web3.storage';
 //import { CarReader } from '@ipld/car';
-import { createReadStream } from 'fs';
-import { NFTStorage, CarReader } from 'nft.storage';
-import { API_TOKENS } from './apiTokens';
-import { packToBlob } from 'ipfs-car/pack/blob';
-import { MemoryBlockStore } from 'ipfs-car/blockstore/memory';
+import { NFTStorage, CarReader, Blob } from 'nft.storage';
+import { ApiTokens } from './apiTokens';
 
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
@@ -16,14 +10,12 @@ import { MemoryBlockStore } from 'ipfs-car/blockstore/memory';
 //see more info here: https://web3.storage/docs/how-tos/work-with-car-files/
 export async function dataToCar(data: string): Promise<CarReader> {
   const someData = new Blob([data]);
-  const { car } = await NFTStorage.encodeBlob(someData)
+  const { car } = await NFTStorage.encodeBlob(someData);
   return car;
 }
 
 //upload car file to both web3.storage and nft.storage
-async function uploadCarFileIPFS(car: CarReader, tokens: API_TOKENS){
-  //if no tokens, throw error
-
+async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens){
   const localCID = (await car.getRoots()).toString();
 
   //web3.storage
@@ -54,7 +46,7 @@ async function uploadCarFileIPFS(car: CarReader, tokens: API_TOKENS){
 
 export async function uploadFileIPFS(
   filePath: string,
-  tokens: API_TOKENS,
+  tokens: ApiTokens,
   retries: number = 3
 ): Promise<string> {
   try {
@@ -74,7 +66,7 @@ export async function uploadFileIPFS(
 
 export async function uploadTextIPFS(
   text: string,
-  tokens: API_TOKENS, 
+  tokens: ApiTokens,
 ): Promise<string> {
   console.log("Uploading text: ", text);
   const car = await dataToCar(text);

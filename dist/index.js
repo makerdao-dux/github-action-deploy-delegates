@@ -34355,6 +34355,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
+//import { CarReader } from '@ipld/car';
 const nft_storage_1 = __nccwpck_require__(9510);
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
@@ -34363,7 +34364,7 @@ const nft_storage_1 = __nccwpck_require__(9510);
 //see more info here: https://web3.storage/docs/how-tos/work-with-car-files/
 function dataToCar(data) {
     return __awaiter(this, void 0, void 0, function* () {
-        const someData = new Blob([data]);
+        const someData = new nft_storage_1.Blob([data]);
         const { car } = yield nft_storage_1.NFTStorage.encodeBlob(someData);
         return car;
     });
@@ -34372,7 +34373,6 @@ exports.dataToCar = dataToCar;
 //upload car file to both web3.storage and nft.storage
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        //if no tokens, throw error
         const localCID = (yield car.getRoots()).toString();
         //web3.storage
         if (tokens.WEB3_STORAGE_TOKEN) {
