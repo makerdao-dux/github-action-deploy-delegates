@@ -36520,8 +36520,11 @@ function dataToCar(filePath) {
             input: filePath,
             blockstore: new memory_1.MemoryBlockStore()
         });
+        console.log('car', car);
         const arrayBuffer = yield car.arrayBuffer();
+        console.log('arrayBuffer', arrayBuffer);
         const array = new Uint8Array(arrayBuffer);
+        console.log('array', array);
         return car_1.CarReader.fromBytes(array);
     });
 }
@@ -36578,6 +36581,7 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
 exports.uploadFileIPFS = uploadFileIPFS;
 function uploadTextIPFS(text, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
+        console.log("Uploading text: ", text);
         const car = yield dataToCar(text);
         return uploadCarFileIPFS(car, tokens);
     });

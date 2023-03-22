@@ -19,8 +19,11 @@ export async function dataToCar(filePath: string): Promise<CarReader> {
     input: filePath,
     blockstore: new MemoryBlockStore()
   });
+  console.log('car', car);
   const arrayBuffer = await car.arrayBuffer();
+  console.log('arrayBuffer', arrayBuffer);
   const array = new Uint8Array(arrayBuffer);
+  console.log('array', array);
   return CarReader.fromBytes(array);
 }
 
@@ -80,6 +83,7 @@ export async function uploadTextIPFS(
   text: string,
   tokens: API_TOKENS, 
 ): Promise<string> {
+  console.log("Uploading text: ", text);
   const car = await dataToCar(text);
   return uploadCarFileIPFS(car, tokens);
 }
