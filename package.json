@@ -18,8 +18,7 @@
     "dotenv": "^16.0.3",
     "front-matter": "^4.0.2",
     "ipfs-http-client": "56.0.2",
-    "nft.storage": "^7.0.3",
-    "web3.storage": "^4.5.4"
+    "nft.storage": "^7.0.3"
   },
   "devDependencies": {
     "@types/node": "^18.11.18",
