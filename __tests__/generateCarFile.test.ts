@@ -16,7 +16,7 @@ test('generate car file from file', async () => {
     null,
     2
   );
-  const car = await dataToCar(fileContents);
+  const car = await dataToCar(Buffer.from(fileContents));
   const CID = (await car.getRoots()).toString();
   expect(CID.length > 45).toBe(true);
 });
