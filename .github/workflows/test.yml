@@ -16,7 +16,7 @@ jobs:
       - run: |
           npm run build
 
-  test-unit: # make sure the action works on a clean machine without building
+  test-unit: # run tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -24,7 +24,7 @@ jobs:
           npm install
       - run: |
           npm run test
-  test: # make sure the action works on a clean machine without building
+  test: # run the action, with data from __tests__ folder
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
