@@ -1,8 +1,15 @@
 import { Web3Storage } from 'web3.storage';
-//import { CarReader } from '@ipld/car';
 import { NFTStorage, CarReader, Blob } from 'nft.storage';
 import { ApiTokens } from './apiTokens';
 import fs from 'fs';
+
+function checkCIDs(localCID: string, remoteCID: string, remoteServiceName: string){
+  if (localCID === remoteCID ) {
+    console.log(`${remoteServiceName} CID equals CID created locally: ${localCID}`);
+  } else {
+    throw new Error(`${remoteServiceName} CID differs from locally generated CID. Local: ${localCID}. ${remoteServiceName}: ${remoteCID}`);
+  }
+}
 
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
@@ -16,6 +23,7 @@ export async function dataToCar(data: Buffer): Promise<CarReader> {
 }
 
 //upload car file to both web3.storage and nft.storage
+//throws error if any CID doesn't match
 async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens){
   const localCID = (await car.getRoots()).toString();
 
@@ -23,22 +31,14 @@ async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens){
   if (tokens.WEB3_STORAGE_TOKEN){
     const web3StorageClient = new Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
     const web3StorageCID = await web3StorageClient.putCar(car);
-    if (localCID === web3StorageCID ) {
-      console.log('web3Storage CID equals CID created locally: ', web3StorageCID);
-    } else {
-      throw new Error(`web3Storage CID differs from locally generated CID. Local: ${localCID}. Web3Storage: ${web3StorageCID}`);
-    }
+    checkCIDs(localCID, web3StorageCID, 'web3.storage');
   }
 
   //nft.storage
   if (tokens.NFT_STORAGE_TOKEN){
     const nftStorageClient = new NFTStorage({ token: tokens.NFT_STORAGE_TOKEN })
     const nftStorageCID = await nftStorageClient.storeCar(car);
-    if (localCID === nftStorageCID ) {
-      console.log('nftStorage CID equals CID created locally: ', nftStorageCID);
-    } else {
-      throw new Error('nftStorage CID differs from locally generated CID')
-    }
+    checkCIDs(localCID, nftStorageCID, 'nft.storage');
   }
 
   return localCID;
@@ -52,7 +52,6 @@ export async function uploadFileIPFS(
 ): Promise<string> {
   try {
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-    //update below
     const fileContents = fs.readFileSync(filePath);
     const car = await dataToCar(fileContents);
     return uploadCarFileIPFS(car, tokens);

@@ -2202,7 +2202,975 @@ exports.demangle = demangle;
 
 /***/ }),
 
-/***/ 6477:
+/***/ 2805:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var reader = __nccwpck_require__(7677);
+var indexer = __nccwpck_require__(3038);
+var iterator = __nccwpck_require__(8229);
+var writer = __nccwpck_require__(9478);
+var indexedReader = __nccwpck_require__(4378);
+
+
+
+exports.CarReader = reader.CarReader;
+exports.CarIndexer = indexer.CarIndexer;
+exports.CarBlockIterator = iterator.CarBlockIterator;
+exports.CarCIDIterator = iterator.CarCIDIterator;
+exports.CarWriter = writer.CarWriter;
+exports.CarIndexedReader = indexedReader.CarIndexedReader;
+
+
+/***/ }),
+
+/***/ 7490:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var varint = __nccwpck_require__(8018);
+var cid = __nccwpck_require__(6447);
+var Digest = __nccwpck_require__(76);
+var dagCbor = __nccwpck_require__(8614);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
+var Digest__namespace = /*#__PURE__*/_interopNamespace(Digest);
+
+const CIDV0_BYTES = {
+  SHA2_256: 18,
+  LENGTH: 32,
+  DAG_PB: 112
+};
+async function readVarint(reader) {
+  const bytes = await reader.upTo(8);
+  const i = varint__default["default"].decode(bytes);
+  reader.seek(varint__default["default"].decode.bytes);
+  return i;
+}
+async function readHeader(reader) {
+  const length = await readVarint(reader);
+  if (length === 0) {
+    throw new Error('Invalid CAR header (zero length)');
+  }
+  const header = await reader.exactly(length);
+  reader.seek(length);
+  const block = dagCbor.decode(header);
+  if (block == null || Array.isArray(block) || typeof block !== 'object') {
+    throw new Error('Invalid CAR header format');
+  }
+  if (block.version !== 1) {
+    if (typeof block.version === 'string') {
+      throw new Error(`Invalid CAR version: "${ block.version }"`);
+    }
+    throw new Error(`Invalid CAR version: ${ block.version }`);
+  }
+  if (!Array.isArray(block.roots)) {
+    throw new Error('Invalid CAR header format');
+  }
+  if (Object.keys(block).filter(p => p !== 'roots' && p !== 'version').length) {
+    throw new Error('Invalid CAR header format');
+  }
+  return block;
+}
+async function readMultihash(reader) {
+  const bytes = await reader.upTo(8);
+  varint__default["default"].decode(bytes);
+  const codeLength = varint__default["default"].decode.bytes;
+  const length = varint__default["default"].decode(bytes.subarray(varint__default["default"].decode.bytes));
+  const lengthLength = varint__default["default"].decode.bytes;
+  const mhLength = codeLength + lengthLength + length;
+  const multihash = await reader.exactly(mhLength);
+  reader.seek(mhLength);
+  return multihash;
+}
+async function readCid(reader) {
+  const first = await reader.exactly(2);
+  if (first[0] === CIDV0_BYTES.SHA2_256 && first[1] === CIDV0_BYTES.LENGTH) {
+    const bytes = await reader.exactly(34);
+    reader.seek(34);
+    const multihash = Digest__namespace.decode(bytes);
+    return cid.CID.create(0, CIDV0_BYTES.DAG_PB, multihash);
+  }
+  const version = await readVarint(reader);
+  if (version !== 1) {
+    throw new Error(`Unexpected CID version (${ version })`);
+  }
+  const codec = await readVarint(reader);
+  const bytes = await readMultihash(reader);
+  const multihash = Digest__namespace.decode(bytes);
+  return cid.CID.create(version, codec, multihash);
+}
+async function readBlockHead(reader) {
+  const start = reader.pos;
+  let length = await readVarint(reader);
+  if (length === 0) {
+    throw new Error('Invalid CAR section (zero length)');
+  }
+  length += reader.pos - start;
+  const cid = await readCid(reader);
+  const blockLength = length - (reader.pos - start);
+  return {
+    cid,
+    length,
+    blockLength
+  };
+}
+async function readBlock(reader) {
+  const {cid, blockLength} = await readBlockHead(reader);
+  const bytes = await reader.exactly(blockLength);
+  reader.seek(blockLength);
+  return {
+    bytes,
+    cid
+  };
+}
+async function readBlockIndex(reader) {
+  const offset = reader.pos;
+  const {cid, length, blockLength} = await readBlockHead(reader);
+  const index = {
+    cid,
+    length,
+    blockLength,
+    offset,
+    blockOffset: reader.pos
+  };
+  reader.seek(index.blockLength);
+  return index;
+}
+function createDecoder(reader) {
+  const headerPromise = readHeader(reader);
+  return {
+    header: () => headerPromise,
+    async *blocks() {
+      await headerPromise;
+      while ((await reader.upTo(8)).length > 0) {
+        yield await readBlock(reader);
+      }
+    },
+    async *blocksIndex() {
+      await headerPromise;
+      while ((await reader.upTo(8)).length > 0) {
+        yield await readBlockIndex(reader);
+      }
+    }
+  };
+}
+function bytesReader(bytes) {
+  let pos = 0;
+  return {
+    async upTo(length) {
+      return bytes.subarray(pos, pos + Math.min(length, bytes.length - pos));
+    },
+    async exactly(length) {
+      if (length > bytes.length - pos) {
+        throw new Error('Unexpected end of data');
+      }
+      return bytes.subarray(pos, pos + length);
+    },
+    seek(length) {
+      pos += length;
+    },
+    get pos() {
+      return pos;
+    }
+  };
+}
+function chunkReader(readChunk) {
+  let pos = 0;
+  let have = 0;
+  let offset = 0;
+  let currentChunk = new Uint8Array(0);
+  const read = async length => {
+    have = currentChunk.length - offset;
+    const bufa = [currentChunk.subarray(offset)];
+    while (have < length) {
+      const chunk = await readChunk();
+      if (chunk == null) {
+        break;
+      }
+      if (have < 0) {
+        if (chunk.length > have) {
+          bufa.push(chunk.subarray(-have));
+        }
+      } else {
+        bufa.push(chunk);
+      }
+      have += chunk.length;
+    }
+    currentChunk = new Uint8Array(bufa.reduce((p, c) => p + c.length, 0));
+    let off = 0;
+    for (const b of bufa) {
+      currentChunk.set(b, off);
+      off += b.length;
+    }
+    offset = 0;
+  };
+  return {
+    async upTo(length) {
+      if (currentChunk.length - offset < length) {
+        await read(length);
+      }
+      return currentChunk.subarray(offset, offset + Math.min(currentChunk.length - offset, length));
+    },
+    async exactly(length) {
+      if (currentChunk.length - offset < length) {
+        await read(length);
+      }
+      if (currentChunk.length - offset < length) {
+        throw new Error('Unexpected end of data');
+      }
+      return currentChunk.subarray(offset, offset + length);
+    },
+    seek(length) {
+      pos += length;
+      offset += length;
+    },
+    get pos() {
+      return pos;
+    }
+  };
+}
+function asyncIterableReader(asyncIterable) {
+  const iterator = asyncIterable[Symbol.asyncIterator]();
+  async function readChunk() {
+    const next = await iterator.next();
+    if (next.done) {
+      return null;
+    }
+    return next.value;
+  }
+  return chunkReader(readChunk);
+}
+
+exports.asyncIterableReader = asyncIterableReader;
+exports.bytesReader = bytesReader;
+exports.chunkReader = chunkReader;
+exports.createDecoder = createDecoder;
+exports.readBlockHead = readBlockHead;
+exports.readHeader = readHeader;
+
+
+/***/ }),
+
+/***/ 9464:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var varint = __nccwpck_require__(8018);
+var dagCbor = __nccwpck_require__(8614);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
+
+function createHeader(roots) {
+  const headerBytes = dagCbor.encode({
+    version: 1,
+    roots
+  });
+  const varintBytes = varint__default["default"].encode(headerBytes.length);
+  const header = new Uint8Array(varintBytes.length + headerBytes.length);
+  header.set(varintBytes, 0);
+  header.set(headerBytes, varintBytes.length);
+  return header;
+}
+function createEncoder(writer) {
+  return {
+    async setRoots(roots) {
+      const bytes = createHeader(roots);
+      await writer.write(bytes);
+    },
+    async writeBlock(block) {
+      const {cid, bytes} = block;
+      await writer.write(new Uint8Array(varint__default["default"].encode(cid.bytes.length + bytes.length)));
+      await writer.write(cid.bytes);
+      if (bytes.length) {
+        await writer.write(bytes);
+      }
+    },
+    async close() {
+      return writer.end();
+    }
+  };
+}
+
+exports.createEncoder = createEncoder;
+exports.createHeader = createHeader;
+
+
+/***/ }),
+
+/***/ 4378:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var fs = __nccwpck_require__(7147);
+var stream = __nccwpck_require__(2781);
+var cid = __nccwpck_require__(6447);
+var indexer = __nccwpck_require__(3038);
+var reader = __nccwpck_require__(7677);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
+
+class CarIndexedReader {
+  constructor(version, path, roots, index, order) {
+    this._version = version;
+    this._path = path;
+    this._roots = roots;
+    this._index = index;
+    this._order = order;
+    this._fd = null;
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+  async has(key) {
+    return this._index.has(key.toString());
+  }
+  async get(key) {
+    const blockIndex = this._index.get(key.toString());
+    if (!blockIndex) {
+      return undefined;
+    }
+    if (!this._fd) {
+      this._fd = await fs__default["default"].promises.open(this._path, 'r');
+    }
+    const readIndex = {
+      cid: key,
+      length: 0,
+      offset: 0,
+      blockLength: blockIndex.blockLength,
+      blockOffset: blockIndex.blockOffset
+    };
+    return reader.CarReader.readRaw(this._fd, readIndex);
+  }
+  async *blocks() {
+    for (const cidStr of this._order) {
+      const block = await this.get(cid.CID.parse(cidStr));
+      if (!block) {
+        throw new Error('Unexpected internal error');
+      }
+      yield block;
+    }
+  }
+  async *cids() {
+    for (const cidStr of this._order) {
+      yield cid.CID.parse(cidStr);
+    }
+  }
+  async close() {
+    if (this._fd) {
+      return this._fd.close();
+    }
+  }
+  static async fromFile(path) {
+    if (typeof path !== 'string') {
+      throw new TypeError('fromFile() requires a file path string');
+    }
+    const iterable = await indexer.CarIndexer.fromIterable(stream.Readable.from(fs__default["default"].createReadStream(path)));
+    const index = new Map();
+    const order = [];
+    for await (const {cid, blockLength, blockOffset} of iterable) {
+      const cidStr = cid.toString();
+      index.set(cidStr, {
+        blockLength,
+        blockOffset
+      });
+      order.push(cidStr);
+    }
+    return new CarIndexedReader(iterable.version, path, await iterable.getRoots(), index, order);
+  }
+}
+const __browser = false;
+
+exports.CarIndexedReader = CarIndexedReader;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 3038:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var decoder = __nccwpck_require__(7490);
+
+class CarIndexer {
+  constructor(version, roots, iterator) {
+    this._version = version;
+    this._roots = roots;
+    this._iterator = iterator;
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+  [Symbol.asyncIterator]() {
+    return this._iterator;
+  }
+  static async fromBytes(bytes) {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError('fromBytes() requires a Uint8Array');
+    }
+    return decodeIndexerComplete(decoder.bytesReader(bytes));
+  }
+  static async fromIterable(asyncIterable) {
+    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
+      throw new TypeError('fromIterable() requires an async iterable');
+    }
+    return decodeIndexerComplete(decoder.asyncIterableReader(asyncIterable));
+  }
+}
+async function decodeIndexerComplete(reader) {
+  const decoder$1 = decoder.createDecoder(reader);
+  const {version, roots} = await decoder$1.header();
+  return new CarIndexer(version, roots, decoder$1.blocksIndex());
+}
+
+exports.CarIndexer = CarIndexer;
+
+
+/***/ }),
+
+/***/ 1330:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+function noop() {
+}
+function create() {
+  const chunkQueue = [];
+  let drainer = null;
+  let drainerResolver = noop;
+  let ended = false;
+  let outWait = null;
+  let outWaitResolver = noop;
+  const makeDrainer = () => {
+    if (!drainer) {
+      drainer = new Promise(resolve => {
+        drainerResolver = () => {
+          drainer = null;
+          drainerResolver = noop;
+          resolve();
+        };
+      });
+    }
+    return drainer;
+  };
+  const writer = {
+    write(chunk) {
+      chunkQueue.push(chunk);
+      const drainer = makeDrainer();
+      outWaitResolver();
+      return drainer;
+    },
+    async end() {
+      ended = true;
+      const drainer = makeDrainer();
+      outWaitResolver();
+      return drainer;
+    }
+  };
+  const iterator = {
+    async next() {
+      const chunk = chunkQueue.shift();
+      if (chunk) {
+        if (chunkQueue.length === 0) {
+          drainerResolver();
+        }
+        return {
+          done: false,
+          value: chunk
+        };
+      }
+      if (ended) {
+        drainerResolver();
+        return {
+          done: true,
+          value: undefined
+        };
+      }
+      if (!outWait) {
+        outWait = new Promise(resolve => {
+          outWaitResolver = () => {
+            outWait = null;
+            outWaitResolver = noop;
+            return resolve(iterator.next());
+          };
+        });
+      }
+      return outWait;
+    }
+  };
+  return {
+    writer,
+    iterator
+  };
+}
+
+exports.create = create;
+
+
+/***/ }),
+
+/***/ 8229:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var decoder = __nccwpck_require__(7490);
+
+class CarIteratorBase {
+  constructor(version, roots, iterable) {
+    this._version = version;
+    this._roots = roots;
+    this._iterable = iterable;
+    this._decoded = false;
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+}
+class CarBlockIterator extends CarIteratorBase {
+  [Symbol.asyncIterator]() {
+    if (this._decoded) {
+      throw new Error('Cannot decode more than once');
+    }
+    if (!this._iterable) {
+      throw new Error('Block iterable not found');
+    }
+    this._decoded = true;
+    return this._iterable[Symbol.asyncIterator]();
+  }
+  static async fromBytes(bytes) {
+    const {version, roots, iterator} = await fromBytes(bytes);
+    return new CarBlockIterator(version, roots, iterator);
+  }
+  static async fromIterable(asyncIterable) {
+    const {version, roots, iterator} = await fromIterable(asyncIterable);
+    return new CarBlockIterator(version, roots, iterator);
+  }
+}
+class CarCIDIterator extends CarIteratorBase {
+  [Symbol.asyncIterator]() {
+    if (this._decoded) {
+      throw new Error('Cannot decode more than once');
+    }
+    if (!this._iterable) {
+      throw new Error('Block iterable not found');
+    }
+    this._decoded = true;
+    const iterable = this._iterable[Symbol.asyncIterator]();
+    return {
+      async next() {
+        const next = await iterable.next();
+        if (next.done) {
+          return next;
+        }
+        return {
+          done: false,
+          value: next.value.cid
+        };
+      }
+    };
+  }
+  static async fromBytes(bytes) {
+    const {version, roots, iterator} = await fromBytes(bytes);
+    return new CarCIDIterator(version, roots, iterator);
+  }
+  static async fromIterable(asyncIterable) {
+    const {version, roots, iterator} = await fromIterable(asyncIterable);
+    return new CarCIDIterator(version, roots, iterator);
+  }
+}
+async function fromBytes(bytes) {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new TypeError('fromBytes() requires a Uint8Array');
+  }
+  return decodeIterator(decoder.bytesReader(bytes));
+}
+async function fromIterable(asyncIterable) {
+  if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
+    throw new TypeError('fromIterable() requires an async iterable');
+  }
+  return decodeIterator(decoder.asyncIterableReader(asyncIterable));
+}
+async function decodeIterator(reader) {
+  const decoder$1 = decoder.createDecoder(reader);
+  const {version, roots} = await decoder$1.header();
+  return {
+    version,
+    roots,
+    iterator: decoder$1.blocks()
+  };
+}
+
+exports.CarBlockIterator = CarBlockIterator;
+exports.CarCIDIterator = CarCIDIterator;
+exports.CarIteratorBase = CarIteratorBase;
+
+
+/***/ }),
+
+/***/ 1599:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var decoder = __nccwpck_require__(7490);
+
+class CarReader {
+  constructor(version, roots, blocks) {
+    this._version = version;
+    this._roots = roots;
+    this._blocks = blocks;
+    this._keys = blocks.map(b => b.cid.toString());
+  }
+  get version() {
+    return this._version;
+  }
+  async getRoots() {
+    return this._roots;
+  }
+  async has(key) {
+    return this._keys.indexOf(key.toString()) > -1;
+  }
+  async get(key) {
+    const index = this._keys.indexOf(key.toString());
+    return index > -1 ? this._blocks[index] : undefined;
+  }
+  async *blocks() {
+    for (const block of this._blocks) {
+      yield block;
+    }
+  }
+  async *cids() {
+    for (const block of this._blocks) {
+      yield block.cid;
+    }
+  }
+  static async fromBytes(bytes) {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError('fromBytes() requires a Uint8Array');
+    }
+    return decodeReaderComplete(decoder.bytesReader(bytes));
+  }
+  static async fromIterable(asyncIterable) {
+    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
+      throw new TypeError('fromIterable() requires an async iterable');
+    }
+    return decodeReaderComplete(decoder.asyncIterableReader(asyncIterable));
+  }
+}
+async function decodeReaderComplete(reader) {
+  const decoder$1 = decoder.createDecoder(reader);
+  const {version, roots} = await decoder$1.header();
+  const blocks = [];
+  for await (const block of decoder$1.blocks()) {
+    blocks.push(block);
+  }
+  return new CarReader(version, roots, blocks);
+}
+const __browser = true;
+
+exports.CarReader = CarReader;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 7677:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var fs = __nccwpck_require__(7147);
+var util = __nccwpck_require__(3837);
+var readerBrowser = __nccwpck_require__(1599);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
+
+const fsread = util.promisify(fs__default["default"].read);
+class CarReader extends readerBrowser.CarReader {
+  static async readRaw(fd, blockIndex) {
+    const {cid, blockLength, blockOffset} = blockIndex;
+    const bytes = new Uint8Array(blockLength);
+    let read;
+    if (typeof fd === 'number') {
+      read = (await fsread(fd, bytes, 0, blockLength, blockOffset)).bytesRead;
+    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
+      read = (await fd.read(bytes, 0, blockLength, blockOffset)).bytesRead;
+    } else {
+      throw new TypeError('Bad fd');
+    }
+    if (read !== blockLength) {
+      throw new Error(`Failed to read entire block (${ read } instead of ${ blockLength })`);
+    }
+    return {
+      cid,
+      bytes
+    };
+  }
+}
+const __browser = false;
+
+exports.CarReader = CarReader;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 5479:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var cid = __nccwpck_require__(6447);
+var encoder = __nccwpck_require__(9464);
+var iteratorChannel = __nccwpck_require__(1330);
+var decoder = __nccwpck_require__(7490);
+
+class CarWriter {
+  constructor(roots, encoder) {
+    this._encoder = encoder;
+    this._mutex = encoder.setRoots(roots);
+    this._ended = false;
+  }
+  async put(block) {
+    if (!(block.bytes instanceof Uint8Array) || !block.cid) {
+      throw new TypeError('Can only write {cid, bytes} objects');
+    }
+    if (this._ended) {
+      throw new Error('Already closed');
+    }
+    const cid$1 = cid.CID.asCID(block.cid);
+    if (!cid$1) {
+      throw new TypeError('Can only write {cid, bytes} objects');
+    }
+    this._mutex = this._mutex.then(() => this._encoder.writeBlock({
+      cid: cid$1,
+      bytes: block.bytes
+    }));
+    return this._mutex;
+  }
+  async close() {
+    if (this._ended) {
+      throw new Error('Already closed');
+    }
+    await this._mutex;
+    this._ended = true;
+    return this._encoder.close();
+  }
+  static create(roots) {
+    roots = toRoots(roots);
+    const {encoder, iterator} = encodeWriter();
+    const writer = new CarWriter(roots, encoder);
+    const out = new CarWriterOut(iterator);
+    return {
+      writer,
+      out
+    };
+  }
+  static createAppender() {
+    const {encoder, iterator} = encodeWriter();
+    encoder.setRoots = () => Promise.resolve();
+    const writer = new CarWriter([], encoder);
+    const out = new CarWriterOut(iterator);
+    return {
+      writer,
+      out
+    };
+  }
+  static async updateRootsInBytes(bytes, roots) {
+    const reader = decoder.bytesReader(bytes);
+    await decoder.readHeader(reader);
+    const newHeader = encoder.createHeader(roots);
+    if (reader.pos !== newHeader.length) {
+      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ reader.pos } bytes, new header is ${ newHeader.length } bytes)`);
+    }
+    bytes.set(newHeader, 0);
+    return bytes;
+  }
+}
+class CarWriterOut {
+  constructor(iterator) {
+    this._iterator = iterator;
+  }
+  [Symbol.asyncIterator]() {
+    if (this._iterating) {
+      throw new Error('Multiple iterator not supported');
+    }
+    this._iterating = true;
+    return this._iterator;
+  }
+}
+function encodeWriter() {
+  const iw = iteratorChannel.create();
+  const {writer, iterator} = iw;
+  const encoder$1 = encoder.createEncoder(writer);
+  return {
+    encoder: encoder$1,
+    iterator
+  };
+}
+function toRoots(roots) {
+  if (roots === undefined) {
+    return [];
+  }
+  if (!Array.isArray(roots)) {
+    const cid$1 = cid.CID.asCID(roots);
+    if (!cid$1) {
+      throw new TypeError('roots must be a single CID or an array of CIDs');
+    }
+    return [cid$1];
+  }
+  const _roots = [];
+  for (const root of roots) {
+    const _root = cid.CID.asCID(root);
+    if (!_root) {
+      throw new TypeError('roots must be a single CID or an array of CIDs');
+    }
+    _roots.push(_root);
+  }
+  return _roots;
+}
+const __browser = true;
+
+exports.CarWriter = CarWriter;
+exports.CarWriterOut = CarWriterOut;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 9478:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var fs = __nccwpck_require__(7147);
+var util = __nccwpck_require__(3837);
+var writerBrowser = __nccwpck_require__(5479);
+var decoder = __nccwpck_require__(7490);
+var encoder = __nccwpck_require__(9464);
+
+function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+
+var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
+
+const fsread = util.promisify(fs__default["default"].read);
+const fswrite = util.promisify(fs__default["default"].write);
+class CarWriter extends writerBrowser.CarWriter {
+  static async updateRootsInFile(fd, roots) {
+    const chunkSize = 256;
+    let bytes;
+    let offset = 0;
+    let readChunk;
+    if (typeof fd === 'number') {
+      readChunk = async () => (await fsread(fd, bytes, 0, chunkSize, offset)).bytesRead;
+    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
+      readChunk = async () => (await fd.read(bytes, 0, chunkSize, offset)).bytesRead;
+    } else {
+      throw new TypeError('Bad fd');
+    }
+    const fdReader = decoder.chunkReader(async () => {
+      bytes = new Uint8Array(chunkSize);
+      const read = await readChunk();
+      offset += read;
+      return read < chunkSize ? bytes.subarray(0, read) : bytes;
+    });
+    await decoder.readHeader(fdReader);
+    const newHeader = encoder.createHeader(roots);
+    if (fdReader.pos !== newHeader.length) {
+      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ fdReader.pos } bytes, new header is ${ newHeader.length } bytes)`);
+    }
+    if (typeof fd === 'number') {
+      await fswrite(fd, newHeader, 0, newHeader.length, 0);
+    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
+      await fd.write(newHeader, 0, newHeader.length, 0);
+    }
+  }
+}
+const __browser = false;
+
+exports.CarWriter = CarWriter;
+exports.__browser = __browser;
+
+
+/***/ }),
+
+/***/ 8614:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -2278,6 +3246,103 @@ function cidDecoder(bytes) {
 const decodeOptions = {
   allowIndefinite: false,
   coerceUndefinedToNull: true,
+  allowNaN: false,
+  allowInfinity: false,
+  allowBigInt: true,
+  strict: true,
+  useMaps: false,
+  tags: []
+};
+decodeOptions.tags[CID_CBOR_TAG] = cidDecoder;
+const name = 'dag-cbor';
+const code = 113;
+const encode = node => cborg__namespace.encode(node, encodeOptions);
+const decode = data => cborg__namespace.decode(data, decodeOptions);
+
+exports.code = code;
+exports.decode = decode;
+exports.encode = encode;
+exports.name = name;
+
+
+/***/ }),
+
+/***/ 6477:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var cborg = __nccwpck_require__(8694);
+var cid = __nccwpck_require__(6447);
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var cborg__namespace = /*#__PURE__*/_interopNamespace(cborg);
+
+const CID_CBOR_TAG = 42;
+function cidEncoder(obj) {
+  if (obj.asCID !== obj) {
+    return null;
+  }
+  const cid$1 = cid.CID.asCID(obj);
+  if (!cid$1) {
+    return null;
+  }
+  const bytes = new Uint8Array(cid$1.bytes.byteLength + 1);
+  bytes.set(cid$1.bytes, 1);
+  return [
+    new cborg__namespace.Token(cborg__namespace.Type.tag, CID_CBOR_TAG),
+    new cborg__namespace.Token(cborg__namespace.Type.bytes, bytes)
+  ];
+}
+function undefinedEncoder() {
+  throw new Error('`undefined` is not supported by the IPLD Data Model and cannot be encoded');
+}
+function numberEncoder(num) {
+  if (Number.isNaN(num)) {
+    throw new Error('`NaN` is not supported by the IPLD Data Model and cannot be encoded');
+  }
+  if (num === Infinity || num === -Infinity) {
+    throw new Error('`Infinity` and `-Infinity` is not supported by the IPLD Data Model and cannot be encoded');
+  }
+  return null;
+}
+const encodeOptions = {
+  float64: true,
+  typeEncoders: {
+    Object: cidEncoder,
+    undefined: undefinedEncoder,
+    number: numberEncoder
+  }
+};
+function cidDecoder(bytes) {
+  if (bytes[0] !== 0) {
+    throw new Error('Invalid CID for CBOR tag 42; expected leading 0x00');
+  }
+  return cid.CID.decode(bytes.subarray(1));
+}
+const decodeOptions = {
+  allowIndefinite: false,
+  allowUndefined: false,
   allowNaN: false,
   allowInfinity: false,
   allowBigInt: true,
@@ -5557,7 +6622,7 @@ exports.TreewalkCarJoiner = joiner.TreewalkCarJoiner;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var car = __nccwpck_require__(4574);
+var car = __nccwpck_require__(2805);
 
 class TreewalkCarJoiner {
   constructor(cars) {
@@ -5608,10 +6673,10 @@ exports.TreewalkCarJoiner = TreewalkCarJoiner;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var car = __nccwpck_require__(4574);
+var car = __nccwpck_require__(2805);
 var block = __nccwpck_require__(4594);
 var raw = __nccwpck_require__(2048);
-var dagCbor = __nccwpck_require__(3849);
+var dagCbor = __nccwpck_require__(6477);
 var pb = __nccwpck_require__(8012);
 
 function _interopNamespace(e) {
@@ -5727,1168 +6792,6 @@ function newCar(parents) {
 }
 
 exports.TreewalkCarSplitter = TreewalkCarSplitter;
-
-
-/***/ }),
-
-/***/ 4574:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var reader = __nccwpck_require__(6005);
-var indexer = __nccwpck_require__(8775);
-var iterator = __nccwpck_require__(8932);
-var writer = __nccwpck_require__(1279);
-var indexedReader = __nccwpck_require__(1762);
-
-
-
-exports.CarReader = reader.CarReader;
-exports.CarIndexer = indexer.CarIndexer;
-exports.CarBlockIterator = iterator.CarBlockIterator;
-exports.CarCIDIterator = iterator.CarCIDIterator;
-exports.CarWriter = writer.CarWriter;
-exports.CarIndexedReader = indexedReader.CarIndexedReader;
-
-
-/***/ }),
-
-/***/ 350:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var varint = __nccwpck_require__(8018);
-var cid = __nccwpck_require__(6447);
-var Digest = __nccwpck_require__(76);
-var dagCbor = __nccwpck_require__(3660);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
-var Digest__namespace = /*#__PURE__*/_interopNamespace(Digest);
-
-const CIDV0_BYTES = {
-  SHA2_256: 18,
-  LENGTH: 32,
-  DAG_PB: 112
-};
-async function readVarint(reader) {
-  const bytes = await reader.upTo(8);
-  const i = varint__default["default"].decode(bytes);
-  reader.seek(varint__default["default"].decode.bytes);
-  return i;
-}
-async function readHeader(reader) {
-  const length = await readVarint(reader);
-  if (length === 0) {
-    throw new Error('Invalid CAR header (zero length)');
-  }
-  const header = await reader.exactly(length);
-  reader.seek(length);
-  const block = dagCbor.decode(header);
-  if (block == null || Array.isArray(block) || typeof block !== 'object') {
-    throw new Error('Invalid CAR header format');
-  }
-  if (block.version !== 1) {
-    if (typeof block.version === 'string') {
-      throw new Error(`Invalid CAR version: "${ block.version }"`);
-    }
-    throw new Error(`Invalid CAR version: ${ block.version }`);
-  }
-  if (!Array.isArray(block.roots)) {
-    throw new Error('Invalid CAR header format');
-  }
-  if (Object.keys(block).filter(p => p !== 'roots' && p !== 'version').length) {
-    throw new Error('Invalid CAR header format');
-  }
-  return block;
-}
-async function readMultihash(reader) {
-  const bytes = await reader.upTo(8);
-  varint__default["default"].decode(bytes);
-  const codeLength = varint__default["default"].decode.bytes;
-  const length = varint__default["default"].decode(bytes.subarray(varint__default["default"].decode.bytes));
-  const lengthLength = varint__default["default"].decode.bytes;
-  const mhLength = codeLength + lengthLength + length;
-  const multihash = await reader.exactly(mhLength);
-  reader.seek(mhLength);
-  return multihash;
-}
-async function readCid(reader) {
-  const first = await reader.exactly(2);
-  if (first[0] === CIDV0_BYTES.SHA2_256 && first[1] === CIDV0_BYTES.LENGTH) {
-    const bytes = await reader.exactly(34);
-    reader.seek(34);
-    const multihash = Digest__namespace.decode(bytes);
-    return cid.CID.create(0, CIDV0_BYTES.DAG_PB, multihash);
-  }
-  const version = await readVarint(reader);
-  if (version !== 1) {
-    throw new Error(`Unexpected CID version (${ version })`);
-  }
-  const codec = await readVarint(reader);
-  const bytes = await readMultihash(reader);
-  const multihash = Digest__namespace.decode(bytes);
-  return cid.CID.create(version, codec, multihash);
-}
-async function readBlockHead(reader) {
-  const start = reader.pos;
-  let length = await readVarint(reader);
-  if (length === 0) {
-    throw new Error('Invalid CAR section (zero length)');
-  }
-  length += reader.pos - start;
-  const cid = await readCid(reader);
-  const blockLength = length - (reader.pos - start);
-  return {
-    cid,
-    length,
-    blockLength
-  };
-}
-async function readBlock(reader) {
-  const {cid, blockLength} = await readBlockHead(reader);
-  const bytes = await reader.exactly(blockLength);
-  reader.seek(blockLength);
-  return {
-    bytes,
-    cid
-  };
-}
-async function readBlockIndex(reader) {
-  const offset = reader.pos;
-  const {cid, length, blockLength} = await readBlockHead(reader);
-  const index = {
-    cid,
-    length,
-    blockLength,
-    offset,
-    blockOffset: reader.pos
-  };
-  reader.seek(index.blockLength);
-  return index;
-}
-function createDecoder(reader) {
-  const headerPromise = readHeader(reader);
-  return {
-    header: () => headerPromise,
-    async *blocks() {
-      await headerPromise;
-      while ((await reader.upTo(8)).length > 0) {
-        yield await readBlock(reader);
-      }
-    },
-    async *blocksIndex() {
-      await headerPromise;
-      while ((await reader.upTo(8)).length > 0) {
-        yield await readBlockIndex(reader);
-      }
-    }
-  };
-}
-function bytesReader(bytes) {
-  let pos = 0;
-  return {
-    async upTo(length) {
-      return bytes.subarray(pos, pos + Math.min(length, bytes.length - pos));
-    },
-    async exactly(length) {
-      if (length > bytes.length - pos) {
-        throw new Error('Unexpected end of data');
-      }
-      return bytes.subarray(pos, pos + length);
-    },
-    seek(length) {
-      pos += length;
-    },
-    get pos() {
-      return pos;
-    }
-  };
-}
-function chunkReader(readChunk) {
-  let pos = 0;
-  let have = 0;
-  let offset = 0;
-  let currentChunk = new Uint8Array(0);
-  const read = async length => {
-    have = currentChunk.length - offset;
-    const bufa = [currentChunk.subarray(offset)];
-    while (have < length) {
-      const chunk = await readChunk();
-      if (chunk == null) {
-        break;
-      }
-      if (have < 0) {
-        if (chunk.length > have) {
-          bufa.push(chunk.subarray(-have));
-        }
-      } else {
-        bufa.push(chunk);
-      }
-      have += chunk.length;
-    }
-    currentChunk = new Uint8Array(bufa.reduce((p, c) => p + c.length, 0));
-    let off = 0;
-    for (const b of bufa) {
-      currentChunk.set(b, off);
-      off += b.length;
-    }
-    offset = 0;
-  };
-  return {
-    async upTo(length) {
-      if (currentChunk.length - offset < length) {
-        await read(length);
-      }
-      return currentChunk.subarray(offset, offset + Math.min(currentChunk.length - offset, length));
-    },
-    async exactly(length) {
-      if (currentChunk.length - offset < length) {
-        await read(length);
-      }
-      if (currentChunk.length - offset < length) {
-        throw new Error('Unexpected end of data');
-      }
-      return currentChunk.subarray(offset, offset + length);
-    },
-    seek(length) {
-      pos += length;
-      offset += length;
-    },
-    get pos() {
-      return pos;
-    }
-  };
-}
-function asyncIterableReader(asyncIterable) {
-  const iterator = asyncIterable[Symbol.asyncIterator]();
-  async function readChunk() {
-    const next = await iterator.next();
-    if (next.done) {
-      return null;
-    }
-    return next.value;
-  }
-  return chunkReader(readChunk);
-}
-
-exports.asyncIterableReader = asyncIterableReader;
-exports.bytesReader = bytesReader;
-exports.chunkReader = chunkReader;
-exports.createDecoder = createDecoder;
-exports.readBlockHead = readBlockHead;
-exports.readHeader = readHeader;
-
-
-/***/ }),
-
-/***/ 5817:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var varint = __nccwpck_require__(8018);
-var dagCbor = __nccwpck_require__(3660);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
-
-function createHeader(roots) {
-  const headerBytes = dagCbor.encode({
-    version: 1,
-    roots
-  });
-  const varintBytes = varint__default["default"].encode(headerBytes.length);
-  const header = new Uint8Array(varintBytes.length + headerBytes.length);
-  header.set(varintBytes, 0);
-  header.set(headerBytes, varintBytes.length);
-  return header;
-}
-function createEncoder(writer) {
-  return {
-    async setRoots(roots) {
-      const bytes = createHeader(roots);
-      await writer.write(bytes);
-    },
-    async writeBlock(block) {
-      const {cid, bytes} = block;
-      await writer.write(new Uint8Array(varint__default["default"].encode(cid.bytes.length + bytes.length)));
-      await writer.write(cid.bytes);
-      if (bytes.length) {
-        await writer.write(bytes);
-      }
-    },
-    async close() {
-      return writer.end();
-    }
-  };
-}
-
-exports.createEncoder = createEncoder;
-exports.createHeader = createHeader;
-
-
-/***/ }),
-
-/***/ 1762:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var stream = __nccwpck_require__(2781);
-var cid = __nccwpck_require__(6447);
-var indexer = __nccwpck_require__(8775);
-var reader = __nccwpck_require__(6005);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-class CarIndexedReader {
-  constructor(version, path, roots, index, order) {
-    this._version = version;
-    this._path = path;
-    this._roots = roots;
-    this._index = index;
-    this._order = order;
-    this._fd = null;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  async has(key) {
-    return this._index.has(key.toString());
-  }
-  async get(key) {
-    const blockIndex = this._index.get(key.toString());
-    if (!blockIndex) {
-      return undefined;
-    }
-    if (!this._fd) {
-      this._fd = await fs__default["default"].promises.open(this._path, 'r');
-    }
-    const readIndex = {
-      cid: key,
-      length: 0,
-      offset: 0,
-      blockLength: blockIndex.blockLength,
-      blockOffset: blockIndex.blockOffset
-    };
-    return reader.CarReader.readRaw(this._fd, readIndex);
-  }
-  async *blocks() {
-    for (const cidStr of this._order) {
-      const block = await this.get(cid.CID.parse(cidStr));
-      if (!block) {
-        throw new Error('Unexpected internal error');
-      }
-      yield block;
-    }
-  }
-  async *cids() {
-    for (const cidStr of this._order) {
-      yield cid.CID.parse(cidStr);
-    }
-  }
-  async close() {
-    if (this._fd) {
-      return this._fd.close();
-    }
-  }
-  static async fromFile(path) {
-    if (typeof path !== 'string') {
-      throw new TypeError('fromFile() requires a file path string');
-    }
-    const iterable = await indexer.CarIndexer.fromIterable(stream.Readable.from(fs__default["default"].createReadStream(path)));
-    const index = new Map();
-    const order = [];
-    for await (const {cid, blockLength, blockOffset} of iterable) {
-      const cidStr = cid.toString();
-      index.set(cidStr, {
-        blockLength,
-        blockOffset
-      });
-      order.push(cidStr);
-    }
-    return new CarIndexedReader(iterable.version, path, await iterable.getRoots(), index, order);
-  }
-}
-const __browser = false;
-
-exports.CarIndexedReader = CarIndexedReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 8775:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(350);
-
-class CarIndexer {
-  constructor(version, roots, iterator) {
-    this._version = version;
-    this._roots = roots;
-    this._iterator = iterator;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  [Symbol.asyncIterator]() {
-    return this._iterator;
-  }
-  static async fromBytes(bytes) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new TypeError('fromBytes() requires a Uint8Array');
-    }
-    return decodeIndexerComplete(decoder.bytesReader(bytes));
-  }
-  static async fromIterable(asyncIterable) {
-    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-      throw new TypeError('fromIterable() requires an async iterable');
-    }
-    return decodeIndexerComplete(decoder.asyncIterableReader(asyncIterable));
-  }
-}
-async function decodeIndexerComplete(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  return new CarIndexer(version, roots, decoder$1.blocksIndex());
-}
-
-exports.CarIndexer = CarIndexer;
-
-
-/***/ }),
-
-/***/ 1607:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-function noop() {
-}
-function create() {
-  const chunkQueue = [];
-  let drainer = null;
-  let drainerResolver = noop;
-  let ended = false;
-  let outWait = null;
-  let outWaitResolver = noop;
-  const makeDrainer = () => {
-    if (!drainer) {
-      drainer = new Promise(resolve => {
-        drainerResolver = () => {
-          drainer = null;
-          drainerResolver = noop;
-          resolve();
-        };
-      });
-    }
-    return drainer;
-  };
-  const writer = {
-    write(chunk) {
-      chunkQueue.push(chunk);
-      const drainer = makeDrainer();
-      outWaitResolver();
-      return drainer;
-    },
-    async end() {
-      ended = true;
-      const drainer = makeDrainer();
-      outWaitResolver();
-      return drainer;
-    }
-  };
-  const iterator = {
-    async next() {
-      const chunk = chunkQueue.shift();
-      if (chunk) {
-        if (chunkQueue.length === 0) {
-          drainerResolver();
-        }
-        return {
-          done: false,
-          value: chunk
-        };
-      }
-      if (ended) {
-        drainerResolver();
-        return {
-          done: true,
-          value: undefined
-        };
-      }
-      if (!outWait) {
-        outWait = new Promise(resolve => {
-          outWaitResolver = () => {
-            outWait = null;
-            outWaitResolver = noop;
-            return resolve(iterator.next());
-          };
-        });
-      }
-      return outWait;
-    }
-  };
-  return {
-    writer,
-    iterator
-  };
-}
-
-exports.create = create;
-
-
-/***/ }),
-
-/***/ 8932:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(350);
-
-class CarIteratorBase {
-  constructor(version, roots, iterable) {
-    this._version = version;
-    this._roots = roots;
-    this._iterable = iterable;
-    this._decoded = false;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-}
-class CarBlockIterator extends CarIteratorBase {
-  [Symbol.asyncIterator]() {
-    if (this._decoded) {
-      throw new Error('Cannot decode more than once');
-    }
-    if (!this._iterable) {
-      throw new Error('Block iterable not found');
-    }
-    this._decoded = true;
-    return this._iterable[Symbol.asyncIterator]();
-  }
-  static async fromBytes(bytes) {
-    const {version, roots, iterator} = await fromBytes(bytes);
-    return new CarBlockIterator(version, roots, iterator);
-  }
-  static async fromIterable(asyncIterable) {
-    const {version, roots, iterator} = await fromIterable(asyncIterable);
-    return new CarBlockIterator(version, roots, iterator);
-  }
-}
-class CarCIDIterator extends CarIteratorBase {
-  [Symbol.asyncIterator]() {
-    if (this._decoded) {
-      throw new Error('Cannot decode more than once');
-    }
-    if (!this._iterable) {
-      throw new Error('Block iterable not found');
-    }
-    this._decoded = true;
-    const iterable = this._iterable[Symbol.asyncIterator]();
-    return {
-      async next() {
-        const next = await iterable.next();
-        if (next.done) {
-          return next;
-        }
-        return {
-          done: false,
-          value: next.value.cid
-        };
-      }
-    };
-  }
-  static async fromBytes(bytes) {
-    const {version, roots, iterator} = await fromBytes(bytes);
-    return new CarCIDIterator(version, roots, iterator);
-  }
-  static async fromIterable(asyncIterable) {
-    const {version, roots, iterator} = await fromIterable(asyncIterable);
-    return new CarCIDIterator(version, roots, iterator);
-  }
-}
-async function fromBytes(bytes) {
-  if (!(bytes instanceof Uint8Array)) {
-    throw new TypeError('fromBytes() requires a Uint8Array');
-  }
-  return decodeIterator(decoder.bytesReader(bytes));
-}
-async function fromIterable(asyncIterable) {
-  if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-    throw new TypeError('fromIterable() requires an async iterable');
-  }
-  return decodeIterator(decoder.asyncIterableReader(asyncIterable));
-}
-async function decodeIterator(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  return {
-    version,
-    roots,
-    iterator: decoder$1.blocks()
-  };
-}
-
-exports.CarBlockIterator = CarBlockIterator;
-exports.CarCIDIterator = CarCIDIterator;
-exports.CarIteratorBase = CarIteratorBase;
-
-
-/***/ }),
-
-/***/ 2363:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(350);
-
-class CarReader {
-  constructor(version, roots, blocks) {
-    this._version = version;
-    this._roots = roots;
-    this._blocks = blocks;
-    this._keys = blocks.map(b => b.cid.toString());
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  async has(key) {
-    return this._keys.indexOf(key.toString()) > -1;
-  }
-  async get(key) {
-    const index = this._keys.indexOf(key.toString());
-    return index > -1 ? this._blocks[index] : undefined;
-  }
-  async *blocks() {
-    for (const block of this._blocks) {
-      yield block;
-    }
-  }
-  async *cids() {
-    for (const block of this._blocks) {
-      yield block.cid;
-    }
-  }
-  static async fromBytes(bytes) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new TypeError('fromBytes() requires a Uint8Array');
-    }
-    return decodeReaderComplete(decoder.bytesReader(bytes));
-  }
-  static async fromIterable(asyncIterable) {
-    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-      throw new TypeError('fromIterable() requires an async iterable');
-    }
-    return decodeReaderComplete(decoder.asyncIterableReader(asyncIterable));
-  }
-}
-async function decodeReaderComplete(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  const blocks = [];
-  for await (const block of decoder$1.blocks()) {
-    blocks.push(block);
-  }
-  return new CarReader(version, roots, blocks);
-}
-const __browser = true;
-
-exports.CarReader = CarReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 6005:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var util = __nccwpck_require__(3837);
-var readerBrowser = __nccwpck_require__(2363);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-const fsread = util.promisify(fs__default["default"].read);
-class CarReader extends readerBrowser.CarReader {
-  static async readRaw(fd, blockIndex) {
-    const {cid, blockLength, blockOffset} = blockIndex;
-    const bytes = new Uint8Array(blockLength);
-    let read;
-    if (typeof fd === 'number') {
-      read = (await fsread(fd, bytes, 0, blockLength, blockOffset)).bytesRead;
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      read = (await fd.read(bytes, 0, blockLength, blockOffset)).bytesRead;
-    } else {
-      throw new TypeError('Bad fd');
-    }
-    if (read !== blockLength) {
-      throw new Error(`Failed to read entire block (${ read } instead of ${ blockLength })`);
-    }
-    return {
-      cid,
-      bytes
-    };
-  }
-}
-const __browser = false;
-
-exports.CarReader = CarReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 6949:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cid = __nccwpck_require__(6447);
-var encoder = __nccwpck_require__(5817);
-var iteratorChannel = __nccwpck_require__(1607);
-var decoder = __nccwpck_require__(350);
-
-class CarWriter {
-  constructor(roots, encoder) {
-    this._encoder = encoder;
-    this._mutex = encoder.setRoots(roots);
-    this._ended = false;
-  }
-  async put(block) {
-    if (!(block.bytes instanceof Uint8Array) || !block.cid) {
-      throw new TypeError('Can only write {cid, bytes} objects');
-    }
-    if (this._ended) {
-      throw new Error('Already closed');
-    }
-    const cid$1 = cid.CID.asCID(block.cid);
-    if (!cid$1) {
-      throw new TypeError('Can only write {cid, bytes} objects');
-    }
-    this._mutex = this._mutex.then(() => this._encoder.writeBlock({
-      cid: cid$1,
-      bytes: block.bytes
-    }));
-    return this._mutex;
-  }
-  async close() {
-    if (this._ended) {
-      throw new Error('Already closed');
-    }
-    await this._mutex;
-    this._ended = true;
-    return this._encoder.close();
-  }
-  static create(roots) {
-    roots = toRoots(roots);
-    const {encoder, iterator} = encodeWriter();
-    const writer = new CarWriter(roots, encoder);
-    const out = new CarWriterOut(iterator);
-    return {
-      writer,
-      out
-    };
-  }
-  static createAppender() {
-    const {encoder, iterator} = encodeWriter();
-    encoder.setRoots = () => Promise.resolve();
-    const writer = new CarWriter([], encoder);
-    const out = new CarWriterOut(iterator);
-    return {
-      writer,
-      out
-    };
-  }
-  static async updateRootsInBytes(bytes, roots) {
-    const reader = decoder.bytesReader(bytes);
-    await decoder.readHeader(reader);
-    const newHeader = encoder.createHeader(roots);
-    if (reader.pos !== newHeader.length) {
-      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ reader.pos } bytes, new header is ${ newHeader.length } bytes)`);
-    }
-    bytes.set(newHeader, 0);
-    return bytes;
-  }
-}
-class CarWriterOut {
-  constructor(iterator) {
-    this._iterator = iterator;
-  }
-  [Symbol.asyncIterator]() {
-    if (this._iterating) {
-      throw new Error('Multiple iterator not supported');
-    }
-    this._iterating = true;
-    return this._iterator;
-  }
-}
-function encodeWriter() {
-  const iw = iteratorChannel.create();
-  const {writer, iterator} = iw;
-  const encoder$1 = encoder.createEncoder(writer);
-  return {
-    encoder: encoder$1,
-    iterator
-  };
-}
-function toRoots(roots) {
-  if (roots === undefined) {
-    return [];
-  }
-  if (!Array.isArray(roots)) {
-    const cid$1 = cid.CID.asCID(roots);
-    if (!cid$1) {
-      throw new TypeError('roots must be a single CID or an array of CIDs');
-    }
-    return [cid$1];
-  }
-  const _roots = [];
-  for (const root of roots) {
-    const _root = cid.CID.asCID(root);
-    if (!_root) {
-      throw new TypeError('roots must be a single CID or an array of CIDs');
-    }
-    _roots.push(_root);
-  }
-  return _roots;
-}
-const __browser = true;
-
-exports.CarWriter = CarWriter;
-exports.CarWriterOut = CarWriterOut;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 1279:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var util = __nccwpck_require__(3837);
-var writerBrowser = __nccwpck_require__(6949);
-var decoder = __nccwpck_require__(350);
-var encoder = __nccwpck_require__(5817);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-const fsread = util.promisify(fs__default["default"].read);
-const fswrite = util.promisify(fs__default["default"].write);
-class CarWriter extends writerBrowser.CarWriter {
-  static async updateRootsInFile(fd, roots) {
-    const chunkSize = 256;
-    let bytes;
-    let offset = 0;
-    let readChunk;
-    if (typeof fd === 'number') {
-      readChunk = async () => (await fsread(fd, bytes, 0, chunkSize, offset)).bytesRead;
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      readChunk = async () => (await fd.read(bytes, 0, chunkSize, offset)).bytesRead;
-    } else {
-      throw new TypeError('Bad fd');
-    }
-    const fdReader = decoder.chunkReader(async () => {
-      bytes = new Uint8Array(chunkSize);
-      const read = await readChunk();
-      offset += read;
-      return read < chunkSize ? bytes.subarray(0, read) : bytes;
-    });
-    await decoder.readHeader(fdReader);
-    const newHeader = encoder.createHeader(roots);
-    if (fdReader.pos !== newHeader.length) {
-      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ fdReader.pos } bytes, new header is ${ newHeader.length } bytes)`);
-    }
-    if (typeof fd === 'number') {
-      await fswrite(fd, newHeader, 0, newHeader.length, 0);
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      await fd.write(newHeader, 0, newHeader.length, 0);
-    }
-  }
-}
-const __browser = false;
-
-exports.CarWriter = CarWriter;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 3660:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cborg = __nccwpck_require__(8694);
-var cid = __nccwpck_require__(6447);
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var cborg__namespace = /*#__PURE__*/_interopNamespace(cborg);
-
-const CID_CBOR_TAG = 42;
-function cidEncoder(obj) {
-  if (obj.asCID !== obj) {
-    return null;
-  }
-  const cid$1 = cid.CID.asCID(obj);
-  if (!cid$1) {
-    return null;
-  }
-  const bytes = new Uint8Array(cid$1.bytes.byteLength + 1);
-  bytes.set(cid$1.bytes, 1);
-  return [
-    new cborg__namespace.Token(cborg__namespace.Type.tag, CID_CBOR_TAG),
-    new cborg__namespace.Token(cborg__namespace.Type.bytes, bytes)
-  ];
-}
-function undefinedEncoder() {
-  throw new Error('`undefined` is not supported by the IPLD Data Model and cannot be encoded');
-}
-function numberEncoder(num) {
-  if (Number.isNaN(num)) {
-    throw new Error('`NaN` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  if (num === Infinity || num === -Infinity) {
-    throw new Error('`Infinity` and `-Infinity` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  return null;
-}
-const encodeOptions = {
-  float64: true,
-  typeEncoders: {
-    Object: cidEncoder,
-    undefined: undefinedEncoder,
-    number: numberEncoder
-  }
-};
-function cidDecoder(bytes) {
-  if (bytes[0] !== 0) {
-    throw new Error('Invalid CID for CBOR tag 42; expected leading 0x00');
-  }
-  return cid.CID.decode(bytes.subarray(1));
-}
-const decodeOptions = {
-  allowIndefinite: false,
-  coerceUndefinedToNull: true,
-  allowNaN: false,
-  allowInfinity: false,
-  allowBigInt: true,
-  strict: true,
-  useMaps: false,
-  tags: []
-};
-decodeOptions.tags[CID_CBOR_TAG] = cidDecoder;
-const name = 'dag-cbor';
-const code = 113;
-const encode = node => cborg__namespace.encode(node, encodeOptions);
-const decode = data => cborg__namespace.decode(data, decodeOptions);
-
-exports.code = code;
-exports.decode = decode;
-exports.encode = encode;
-exports.name = name;
-
-
-/***/ }),
-
-/***/ 3849:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cborg = __nccwpck_require__(8694);
-var cid = __nccwpck_require__(6447);
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var cborg__namespace = /*#__PURE__*/_interopNamespace(cborg);
-
-const CID_CBOR_TAG = 42;
-function cidEncoder(obj) {
-  if (obj.asCID !== obj) {
-    return null;
-  }
-  const cid$1 = cid.CID.asCID(obj);
-  if (!cid$1) {
-    return null;
-  }
-  const bytes = new Uint8Array(cid$1.bytes.byteLength + 1);
-  bytes.set(cid$1.bytes, 1);
-  return [
-    new cborg__namespace.Token(cborg__namespace.Type.tag, CID_CBOR_TAG),
-    new cborg__namespace.Token(cborg__namespace.Type.bytes, bytes)
-  ];
-}
-function undefinedEncoder() {
-  throw new Error('`undefined` is not supported by the IPLD Data Model and cannot be encoded');
-}
-function numberEncoder(num) {
-  if (Number.isNaN(num)) {
-    throw new Error('`NaN` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  if (num === Infinity || num === -Infinity) {
-    throw new Error('`Infinity` and `-Infinity` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  return null;
-}
-const encodeOptions = {
-  float64: true,
-  typeEncoders: {
-    Object: cidEncoder,
-    undefined: undefinedEncoder,
-    number: numberEncoder
-  }
-};
-function cidDecoder(bytes) {
-  if (bytes[0] !== 0) {
-    throw new Error('Invalid CID for CBOR tag 42; expected leading 0x00');
-  }
-  return cid.CID.decode(bytes.subarray(1));
-}
-const decodeOptions = {
-  allowIndefinite: false,
-  allowUndefined: false,
-  allowNaN: false,
-  allowInfinity: false,
-  allowBigInt: true,
-  strict: true,
-  useMaps: false,
-  tags: []
-};
-decodeOptions.tags[CID_CBOR_TAG] = cidDecoder;
-const name = 'dag-cbor';
-const code = 113;
-const encode = node => cborg__namespace.encode(node, encodeOptions);
-const decode = data => cborg__namespace.decode(data, decodeOptions);
-
-exports.code = code;
-exports.decode = decode;
-exports.encode = encode;
-exports.name = name;
 
 
 /***/ }),
@@ -10719,6 +10622,264 @@ module.exports = {
 
 /***/ }),
 
+/***/ 2689:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FsBlockStore = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const multiformats_1 = __nccwpck_require__(5978);
+const blockstore_core_1 = __nccwpck_require__(6226);
+class FsBlockStore extends blockstore_core_1.BaseBlockstore {
+    constructor() {
+        super();
+        this.path = `${os_1.default.tmpdir()}/${(parseInt(String(Math.random() * 1e9), 10)).toString() + Date.now()}`;
+        this._opened = false;
+    }
+    async _open() {
+        if (this._opening) {
+            await this._opening;
+        }
+        else {
+            this._opening = fs_1.default.promises.mkdir(this.path);
+            await this._opening;
+            this._opened = true;
+        }
+    }
+    async put(cid, bytes) {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cidStr = cid.toString();
+        const location = `${this.path}/${cidStr}`;
+        await fs_1.default.promises.writeFile(location, bytes);
+    }
+    async get(cid) {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cidStr = cid.toString();
+        const location = `${this.path}/${cidStr}`;
+        const bytes = await fs_1.default.promises.readFile(location);
+        return bytes;
+    }
+    async has(cid) {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cidStr = cid.toString();
+        const location = `${this.path}/${cidStr}`;
+        try {
+            await fs_1.default.promises.access(location);
+            return true;
+        }
+        catch (err) {
+            return false;
+        }
+    }
+    async *blocks() {
+        if (!this._opened) {
+            await this._open();
+        }
+        const cids = await fs_1.default.promises.readdir(this.path);
+        for (const cidStr of cids) {
+            const location = `${this.path}/${cidStr}`;
+            const bytes = await fs_1.default.promises.readFile(location);
+            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
+        }
+    }
+    async close() {
+        if (this._opened) {
+            await fs_1.default.promises.rm(this.path, { recursive: true });
+        }
+        this._opened = false;
+    }
+}
+exports.FsBlockStore = FsBlockStore;
+
+
+/***/ }),
+
+/***/ 7913:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MemoryBlockStore = void 0;
+const multiformats_1 = __nccwpck_require__(5978);
+const blockstore_core_1 = __nccwpck_require__(6226);
+class MemoryBlockStore extends blockstore_core_1.BaseBlockstore {
+    constructor() {
+        super();
+        this.store = new Map();
+    }
+    async *blocks() {
+        for (const [cidStr, bytes] of this.store.entries()) {
+            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
+        }
+    }
+    put(cid, bytes) {
+        this.store.set(cid.toString(), bytes);
+        return Promise.resolve();
+    }
+    get(cid) {
+        const bytes = this.store.get(cid.toString());
+        if (!bytes) {
+            throw new Error(`block with cid ${cid.toString()} no found`);
+        }
+        return Promise.resolve(bytes);
+    }
+    has(cid) {
+        return Promise.resolve(this.store.has(cid.toString()));
+    }
+    close() {
+        this.store.clear();
+        return Promise.resolve();
+    }
+}
+exports.MemoryBlockStore = MemoryBlockStore;
+
+
+/***/ }),
+
+/***/ 1563:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.unixfsImporterOptionsDefault = void 0;
+const sha2_1 = __nccwpck_require__(6987);
+exports.unixfsImporterOptionsDefault = {
+    cidVersion: 1,
+    chunker: 'fixed',
+    maxChunkSize: 262144,
+    hasher: sha2_1.sha256,
+    rawLeaves: true,
+    wrapWithDirectory: true,
+    maxChildrenPerNode: 174
+};
+
+
+/***/ }),
+
+/***/ 8163:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.pack = void 0;
+const it_last_1 = __importDefault(__nccwpck_require__(7123));
+const it_pipe_1 = __importDefault(__nccwpck_require__(7185));
+const car_1 = __nccwpck_require__(2805);
+const ipfs_unixfs_importer_1 = __nccwpck_require__(1626);
+const normalise_input_1 = __nccwpck_require__(7717);
+const memory_1 = __nccwpck_require__(7913);
+const constants_1 = __nccwpck_require__(1563);
+async function pack({ input, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves }) {
+    if (!input || (Array.isArray(input) && !input.length)) {
+        throw new Error('missing input file(s)');
+    }
+    const blockstore = userBlockstore ? userBlockstore : new memory_1.MemoryBlockStore();
+    // Consume the source
+    const rootEntry = await (0, it_last_1.default)((0, it_pipe_1.default)((0, normalise_input_1.getNormaliser)(input), (source) => (0, ipfs_unixfs_importer_1.importer)(source, blockstore, {
+        ...constants_1.unixfsImporterOptionsDefault,
+        hasher: hasher || constants_1.unixfsImporterOptionsDefault.hasher,
+        maxChunkSize: maxChunkSize || constants_1.unixfsImporterOptionsDefault.maxChunkSize,
+        maxChildrenPerNode: maxChildrenPerNode || constants_1.unixfsImporterOptionsDefault.maxChildrenPerNode,
+        wrapWithDirectory: wrapWithDirectory === false ? false : constants_1.unixfsImporterOptionsDefault.wrapWithDirectory,
+        rawLeaves: rawLeaves == null ? constants_1.unixfsImporterOptionsDefault.rawLeaves : rawLeaves
+    })));
+    if (!rootEntry || !rootEntry.cid) {
+        throw new Error('given input could not be parsed correctly');
+    }
+    const root = rootEntry.cid;
+    const { writer, out: carOut } = await car_1.CarWriter.create([root]);
+    const carOutIter = carOut[Symbol.asyncIterator]();
+    let writingPromise;
+    const writeAll = async () => {
+        for await (const block of blockstore.blocks()) {
+            // `await` will block until all bytes in `carOut` are consumed by the user
+            // so we have backpressure here
+            await writer.put(block);
+        }
+        await writer.close();
+        if (!userBlockstore) {
+            await blockstore.close();
+        }
+    };
+    const out = {
+        [Symbol.asyncIterator]() {
+            if (writingPromise != null) {
+                throw new Error('Multiple iterator not supported');
+            }
+            // don't start writing until the user starts consuming the iterator
+            writingPromise = writeAll();
+            return {
+                async next() {
+                    const result = await carOutIter.next();
+                    if (result.done) {
+                        await writingPromise; // any errors will propagate from here
+                    }
+                    return result;
+                }
+            };
+        }
+    };
+    return { root, out };
+}
+exports.pack = pack;
+
+
+/***/ }),
+
+/***/ 7717:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getNormaliser = void 0;
+const normalise_input_single_1 = __nccwpck_require__(4304);
+const normalise_input_multiple_1 = __nccwpck_require__(9285);
+function isBytes(obj) {
+    return ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer;
+}
+function isBlob(obj) {
+    return Boolean(obj.constructor) &&
+        (obj.constructor.name === 'Blob' || obj.constructor.name === 'File') &&
+        typeof obj.stream === 'function';
+}
+function isSingle(input) {
+    return typeof input === 'string' || input instanceof String || isBytes(input) || isBlob(input) || '_readableState' in input;
+}
+/**
+ * Get a single or multiple normaliser depending on the input.
+ */
+function getNormaliser(input) {
+    if (isSingle(input)) {
+        return (0, normalise_input_single_1.normaliseInput)(input);
+    }
+    else {
+        return (0, normalise_input_multiple_1.normaliseInput)(input);
+    }
+}
+exports.getNormaliser = getNormaliser;
+
+
+/***/ }),
+
 /***/ 6974:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -11133,7 +11294,7 @@ exports.walkPath = walkPath;
 
 var cid = __nccwpck_require__(6447);
 var errCode = __nccwpck_require__(2997);
-var dagCbor = __nccwpck_require__(6477);
+var dagCbor = __nccwpck_require__(3795);
 
 function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
 
@@ -11290,7 +11451,7 @@ module.exports = resolve;
 
 var errCode = __nccwpck_require__(2997);
 var dagPb = __nccwpck_require__(8012);
-var dagCbor = __nccwpck_require__(6477);
+var dagCbor = __nccwpck_require__(3795);
 var raw = __nccwpck_require__(2048);
 var identity = __nccwpck_require__(2379);
 var index = __nccwpck_require__(9662);
@@ -11424,7 +11585,7 @@ var validateOffsetAndLength = __nccwpck_require__(4287);
 var ipfsUnixfs = __nccwpck_require__(4103);
 var errCode = __nccwpck_require__(2997);
 var dagPb = __nccwpck_require__(8012);
-var dagCbor = __nccwpck_require__(6477);
+var dagCbor = __nccwpck_require__(3795);
 var raw = __nccwpck_require__(2048);
 
 function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
@@ -11807,6 +11968,103 @@ const validateOffsetAndLength = (size, offset, length) => {
 };
 
 module.exports = validateOffsetAndLength;
+
+
+/***/ }),
+
+/***/ 3795:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var cborg = __nccwpck_require__(8694);
+var cid = __nccwpck_require__(6447);
+
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  var n = Object.create(null);
+  if (e) {
+    Object.keys(e).forEach(function (k) {
+      if (k !== 'default') {
+        var d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: function () { return e[k]; }
+        });
+      }
+    });
+  }
+  n["default"] = e;
+  return Object.freeze(n);
+}
+
+var cborg__namespace = /*#__PURE__*/_interopNamespace(cborg);
+
+const CID_CBOR_TAG = 42;
+function cidEncoder(obj) {
+  if (obj.asCID !== obj) {
+    return null;
+  }
+  const cid$1 = cid.CID.asCID(obj);
+  if (!cid$1) {
+    return null;
+  }
+  const bytes = new Uint8Array(cid$1.bytes.byteLength + 1);
+  bytes.set(cid$1.bytes, 1);
+  return [
+    new cborg__namespace.Token(cborg__namespace.Type.tag, CID_CBOR_TAG),
+    new cborg__namespace.Token(cborg__namespace.Type.bytes, bytes)
+  ];
+}
+function undefinedEncoder() {
+  throw new Error('`undefined` is not supported by the IPLD Data Model and cannot be encoded');
+}
+function numberEncoder(num) {
+  if (Number.isNaN(num)) {
+    throw new Error('`NaN` is not supported by the IPLD Data Model and cannot be encoded');
+  }
+  if (num === Infinity || num === -Infinity) {
+    throw new Error('`Infinity` and `-Infinity` is not supported by the IPLD Data Model and cannot be encoded');
+  }
+  return null;
+}
+const encodeOptions = {
+  float64: true,
+  typeEncoders: {
+    Object: cidEncoder,
+    undefined: undefinedEncoder,
+    number: numberEncoder
+  }
+};
+function cidDecoder(bytes) {
+  if (bytes[0] !== 0) {
+    throw new Error('Invalid CID for CBOR tag 42; expected leading 0x00');
+  }
+  return cid.CID.decode(bytes.subarray(1));
+}
+const decodeOptions = {
+  allowIndefinite: false,
+  coerceUndefinedToNull: true,
+  allowNaN: false,
+  allowInfinity: false,
+  allowBigInt: true,
+  strict: true,
+  useMaps: false,
+  tags: []
+};
+decodeOptions.tags[CID_CBOR_TAG] = cidDecoder;
+const name = 'dag-cbor';
+const code = 113;
+const encode = node => cborg__namespace.encode(node, encodeOptions);
+const decode = data => cborg__namespace.decode(data, decodeOptions);
+
+exports.code = code;
+exports.decode = decode;
+exports.encode = encode;
+exports.name = name;
 
 
 /***/ }),
@@ -21725,1426 +21983,6 @@ module.exports = __nccwpck_require__(1306);
 
 /***/ }),
 
-/***/ 8069:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var reader = __nccwpck_require__(6706);
-var indexer = __nccwpck_require__(3627);
-var iterator = __nccwpck_require__(8181);
-var writer = __nccwpck_require__(9808);
-var indexedReader = __nccwpck_require__(8074);
-
-
-
-exports.CarReader = reader.CarReader;
-exports.CarIndexer = indexer.CarIndexer;
-exports.CarBlockIterator = iterator.CarBlockIterator;
-exports.CarCIDIterator = iterator.CarCIDIterator;
-exports.CarWriter = writer.CarWriter;
-exports.CarIndexedReader = indexedReader.CarIndexedReader;
-
-
-/***/ }),
-
-/***/ 7641:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var varint = __nccwpck_require__(8018);
-var cid = __nccwpck_require__(6447);
-var Digest = __nccwpck_require__(76);
-var dagCbor = __nccwpck_require__(5203);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
-var Digest__namespace = /*#__PURE__*/_interopNamespace(Digest);
-
-const CIDV0_BYTES = {
-  SHA2_256: 18,
-  LENGTH: 32,
-  DAG_PB: 112
-};
-async function readVarint(reader) {
-  const bytes = await reader.upTo(8);
-  const i = varint__default["default"].decode(bytes);
-  reader.seek(varint__default["default"].decode.bytes);
-  return i;
-}
-async function readHeader(reader) {
-  const length = await readVarint(reader);
-  if (length === 0) {
-    throw new Error('Invalid CAR header (zero length)');
-  }
-  const header = await reader.exactly(length);
-  reader.seek(length);
-  const block = dagCbor.decode(header);
-  if (block == null || Array.isArray(block) || typeof block !== 'object') {
-    throw new Error('Invalid CAR header format');
-  }
-  if (block.version !== 1) {
-    if (typeof block.version === 'string') {
-      throw new Error(`Invalid CAR version: "${ block.version }"`);
-    }
-    throw new Error(`Invalid CAR version: ${ block.version }`);
-  }
-  if (!Array.isArray(block.roots)) {
-    throw new Error('Invalid CAR header format');
-  }
-  if (Object.keys(block).filter(p => p !== 'roots' && p !== 'version').length) {
-    throw new Error('Invalid CAR header format');
-  }
-  return block;
-}
-async function readMultihash(reader) {
-  const bytes = await reader.upTo(8);
-  varint__default["default"].decode(bytes);
-  const codeLength = varint__default["default"].decode.bytes;
-  const length = varint__default["default"].decode(bytes.subarray(varint__default["default"].decode.bytes));
-  const lengthLength = varint__default["default"].decode.bytes;
-  const mhLength = codeLength + lengthLength + length;
-  const multihash = await reader.exactly(mhLength);
-  reader.seek(mhLength);
-  return multihash;
-}
-async function readCid(reader) {
-  const first = await reader.exactly(2);
-  if (first[0] === CIDV0_BYTES.SHA2_256 && first[1] === CIDV0_BYTES.LENGTH) {
-    const bytes = await reader.exactly(34);
-    reader.seek(34);
-    const multihash = Digest__namespace.decode(bytes);
-    return cid.CID.create(0, CIDV0_BYTES.DAG_PB, multihash);
-  }
-  const version = await readVarint(reader);
-  if (version !== 1) {
-    throw new Error(`Unexpected CID version (${ version })`);
-  }
-  const codec = await readVarint(reader);
-  const bytes = await readMultihash(reader);
-  const multihash = Digest__namespace.decode(bytes);
-  return cid.CID.create(version, codec, multihash);
-}
-async function readBlockHead(reader) {
-  const start = reader.pos;
-  let length = await readVarint(reader);
-  if (length === 0) {
-    throw new Error('Invalid CAR section (zero length)');
-  }
-  length += reader.pos - start;
-  const cid = await readCid(reader);
-  const blockLength = length - (reader.pos - start);
-  return {
-    cid,
-    length,
-    blockLength
-  };
-}
-async function readBlock(reader) {
-  const {cid, blockLength} = await readBlockHead(reader);
-  const bytes = await reader.exactly(blockLength);
-  reader.seek(blockLength);
-  return {
-    bytes,
-    cid
-  };
-}
-async function readBlockIndex(reader) {
-  const offset = reader.pos;
-  const {cid, length, blockLength} = await readBlockHead(reader);
-  const index = {
-    cid,
-    length,
-    blockLength,
-    offset,
-    blockOffset: reader.pos
-  };
-  reader.seek(index.blockLength);
-  return index;
-}
-function createDecoder(reader) {
-  const headerPromise = readHeader(reader);
-  return {
-    header: () => headerPromise,
-    async *blocks() {
-      await headerPromise;
-      while ((await reader.upTo(8)).length > 0) {
-        yield await readBlock(reader);
-      }
-    },
-    async *blocksIndex() {
-      await headerPromise;
-      while ((await reader.upTo(8)).length > 0) {
-        yield await readBlockIndex(reader);
-      }
-    }
-  };
-}
-function bytesReader(bytes) {
-  let pos = 0;
-  return {
-    async upTo(length) {
-      return bytes.subarray(pos, pos + Math.min(length, bytes.length - pos));
-    },
-    async exactly(length) {
-      if (length > bytes.length - pos) {
-        throw new Error('Unexpected end of data');
-      }
-      return bytes.subarray(pos, pos + length);
-    },
-    seek(length) {
-      pos += length;
-    },
-    get pos() {
-      return pos;
-    }
-  };
-}
-function chunkReader(readChunk) {
-  let pos = 0;
-  let have = 0;
-  let offset = 0;
-  let currentChunk = new Uint8Array(0);
-  const read = async length => {
-    have = currentChunk.length - offset;
-    const bufa = [currentChunk.subarray(offset)];
-    while (have < length) {
-      const chunk = await readChunk();
-      if (chunk == null) {
-        break;
-      }
-      if (have < 0) {
-        if (chunk.length > have) {
-          bufa.push(chunk.subarray(-have));
-        }
-      } else {
-        bufa.push(chunk);
-      }
-      have += chunk.length;
-    }
-    currentChunk = new Uint8Array(bufa.reduce((p, c) => p + c.length, 0));
-    let off = 0;
-    for (const b of bufa) {
-      currentChunk.set(b, off);
-      off += b.length;
-    }
-    offset = 0;
-  };
-  return {
-    async upTo(length) {
-      if (currentChunk.length - offset < length) {
-        await read(length);
-      }
-      return currentChunk.subarray(offset, offset + Math.min(currentChunk.length - offset, length));
-    },
-    async exactly(length) {
-      if (currentChunk.length - offset < length) {
-        await read(length);
-      }
-      if (currentChunk.length - offset < length) {
-        throw new Error('Unexpected end of data');
-      }
-      return currentChunk.subarray(offset, offset + length);
-    },
-    seek(length) {
-      pos += length;
-      offset += length;
-    },
-    get pos() {
-      return pos;
-    }
-  };
-}
-function asyncIterableReader(asyncIterable) {
-  const iterator = asyncIterable[Symbol.asyncIterator]();
-  async function readChunk() {
-    const next = await iterator.next();
-    if (next.done) {
-      return null;
-    }
-    return next.value;
-  }
-  return chunkReader(readChunk);
-}
-
-exports.asyncIterableReader = asyncIterableReader;
-exports.bytesReader = bytesReader;
-exports.chunkReader = chunkReader;
-exports.createDecoder = createDecoder;
-exports.readBlockHead = readBlockHead;
-exports.readHeader = readHeader;
-
-
-/***/ }),
-
-/***/ 1453:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var varint = __nccwpck_require__(8018);
-var dagCbor = __nccwpck_require__(5203);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
-
-function createHeader(roots) {
-  const headerBytes = dagCbor.encode({
-    version: 1,
-    roots
-  });
-  const varintBytes = varint__default["default"].encode(headerBytes.length);
-  const header = new Uint8Array(varintBytes.length + headerBytes.length);
-  header.set(varintBytes, 0);
-  header.set(headerBytes, varintBytes.length);
-  return header;
-}
-function createEncoder(writer) {
-  return {
-    async setRoots(roots) {
-      const bytes = createHeader(roots);
-      await writer.write(bytes);
-    },
-    async writeBlock(block) {
-      const {cid, bytes} = block;
-      await writer.write(new Uint8Array(varint__default["default"].encode(cid.bytes.length + bytes.length)));
-      await writer.write(cid.bytes);
-      if (bytes.length) {
-        await writer.write(bytes);
-      }
-    },
-    async close() {
-      return writer.end();
-    }
-  };
-}
-
-exports.createEncoder = createEncoder;
-exports.createHeader = createHeader;
-
-
-/***/ }),
-
-/***/ 8074:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var stream = __nccwpck_require__(2781);
-var cid = __nccwpck_require__(6447);
-var indexer = __nccwpck_require__(3627);
-var reader = __nccwpck_require__(6706);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-class CarIndexedReader {
-  constructor(version, path, roots, index, order) {
-    this._version = version;
-    this._path = path;
-    this._roots = roots;
-    this._index = index;
-    this._order = order;
-    this._fd = null;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  async has(key) {
-    return this._index.has(key.toString());
-  }
-  async get(key) {
-    const blockIndex = this._index.get(key.toString());
-    if (!blockIndex) {
-      return undefined;
-    }
-    if (!this._fd) {
-      this._fd = await fs__default["default"].promises.open(this._path, 'r');
-    }
-    const readIndex = {
-      cid: key,
-      length: 0,
-      offset: 0,
-      blockLength: blockIndex.blockLength,
-      blockOffset: blockIndex.blockOffset
-    };
-    return reader.CarReader.readRaw(this._fd, readIndex);
-  }
-  async *blocks() {
-    for (const cidStr of this._order) {
-      const block = await this.get(cid.CID.parse(cidStr));
-      if (!block) {
-        throw new Error('Unexpected internal error');
-      }
-      yield block;
-    }
-  }
-  async *cids() {
-    for (const cidStr of this._order) {
-      yield cid.CID.parse(cidStr);
-    }
-  }
-  async close() {
-    if (this._fd) {
-      return this._fd.close();
-    }
-  }
-  static async fromFile(path) {
-    if (typeof path !== 'string') {
-      throw new TypeError('fromFile() requires a file path string');
-    }
-    const iterable = await indexer.CarIndexer.fromIterable(stream.Readable.from(fs__default["default"].createReadStream(path)));
-    const index = new Map();
-    const order = [];
-    for await (const {cid, blockLength, blockOffset} of iterable) {
-      const cidStr = cid.toString();
-      index.set(cidStr, {
-        blockLength,
-        blockOffset
-      });
-      order.push(cidStr);
-    }
-    return new CarIndexedReader(iterable.version, path, await iterable.getRoots(), index, order);
-  }
-}
-const __browser = false;
-
-exports.CarIndexedReader = CarIndexedReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 3627:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(7641);
-
-class CarIndexer {
-  constructor(version, roots, iterator) {
-    this._version = version;
-    this._roots = roots;
-    this._iterator = iterator;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  [Symbol.asyncIterator]() {
-    return this._iterator;
-  }
-  static async fromBytes(bytes) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new TypeError('fromBytes() requires a Uint8Array');
-    }
-    return decodeIndexerComplete(decoder.bytesReader(bytes));
-  }
-  static async fromIterable(asyncIterable) {
-    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-      throw new TypeError('fromIterable() requires an async iterable');
-    }
-    return decodeIndexerComplete(decoder.asyncIterableReader(asyncIterable));
-  }
-}
-async function decodeIndexerComplete(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  return new CarIndexer(version, roots, decoder$1.blocksIndex());
-}
-
-exports.CarIndexer = CarIndexer;
-
-
-/***/ }),
-
-/***/ 940:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-function noop() {
-}
-function create() {
-  const chunkQueue = [];
-  let drainer = null;
-  let drainerResolver = noop;
-  let ended = false;
-  let outWait = null;
-  let outWaitResolver = noop;
-  const makeDrainer = () => {
-    if (!drainer) {
-      drainer = new Promise(resolve => {
-        drainerResolver = () => {
-          drainer = null;
-          drainerResolver = noop;
-          resolve();
-        };
-      });
-    }
-    return drainer;
-  };
-  const writer = {
-    write(chunk) {
-      chunkQueue.push(chunk);
-      const drainer = makeDrainer();
-      outWaitResolver();
-      return drainer;
-    },
-    async end() {
-      ended = true;
-      const drainer = makeDrainer();
-      outWaitResolver();
-      return drainer;
-    }
-  };
-  const iterator = {
-    async next() {
-      const chunk = chunkQueue.shift();
-      if (chunk) {
-        if (chunkQueue.length === 0) {
-          drainerResolver();
-        }
-        return {
-          done: false,
-          value: chunk
-        };
-      }
-      if (ended) {
-        drainerResolver();
-        return {
-          done: true,
-          value: undefined
-        };
-      }
-      if (!outWait) {
-        outWait = new Promise(resolve => {
-          outWaitResolver = () => {
-            outWait = null;
-            outWaitResolver = noop;
-            return resolve(iterator.next());
-          };
-        });
-      }
-      return outWait;
-    }
-  };
-  return {
-    writer,
-    iterator
-  };
-}
-
-exports.create = create;
-
-
-/***/ }),
-
-/***/ 8181:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(7641);
-
-class CarIteratorBase {
-  constructor(version, roots, iterable) {
-    this._version = version;
-    this._roots = roots;
-    this._iterable = iterable;
-    this._decoded = false;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-}
-class CarBlockIterator extends CarIteratorBase {
-  [Symbol.asyncIterator]() {
-    if (this._decoded) {
-      throw new Error('Cannot decode more than once');
-    }
-    if (!this._iterable) {
-      throw new Error('Block iterable not found');
-    }
-    this._decoded = true;
-    return this._iterable[Symbol.asyncIterator]();
-  }
-  static async fromBytes(bytes) {
-    const {version, roots, iterator} = await fromBytes(bytes);
-    return new CarBlockIterator(version, roots, iterator);
-  }
-  static async fromIterable(asyncIterable) {
-    const {version, roots, iterator} = await fromIterable(asyncIterable);
-    return new CarBlockIterator(version, roots, iterator);
-  }
-}
-class CarCIDIterator extends CarIteratorBase {
-  [Symbol.asyncIterator]() {
-    if (this._decoded) {
-      throw new Error('Cannot decode more than once');
-    }
-    if (!this._iterable) {
-      throw new Error('Block iterable not found');
-    }
-    this._decoded = true;
-    const iterable = this._iterable[Symbol.asyncIterator]();
-    return {
-      async next() {
-        const next = await iterable.next();
-        if (next.done) {
-          return next;
-        }
-        return {
-          done: false,
-          value: next.value.cid
-        };
-      }
-    };
-  }
-  static async fromBytes(bytes) {
-    const {version, roots, iterator} = await fromBytes(bytes);
-    return new CarCIDIterator(version, roots, iterator);
-  }
-  static async fromIterable(asyncIterable) {
-    const {version, roots, iterator} = await fromIterable(asyncIterable);
-    return new CarCIDIterator(version, roots, iterator);
-  }
-}
-async function fromBytes(bytes) {
-  if (!(bytes instanceof Uint8Array)) {
-    throw new TypeError('fromBytes() requires a Uint8Array');
-  }
-  return decodeIterator(decoder.bytesReader(bytes));
-}
-async function fromIterable(asyncIterable) {
-  if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-    throw new TypeError('fromIterable() requires an async iterable');
-  }
-  return decodeIterator(decoder.asyncIterableReader(asyncIterable));
-}
-async function decodeIterator(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  return {
-    version,
-    roots,
-    iterator: decoder$1.blocks()
-  };
-}
-
-exports.CarBlockIterator = CarBlockIterator;
-exports.CarCIDIterator = CarCIDIterator;
-exports.CarIteratorBase = CarIteratorBase;
-
-
-/***/ }),
-
-/***/ 2284:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(7641);
-
-class CarReader {
-  constructor(version, roots, blocks) {
-    this._version = version;
-    this._roots = roots;
-    this._blocks = blocks;
-    this._keys = blocks.map(b => b.cid.toString());
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  async has(key) {
-    return this._keys.indexOf(key.toString()) > -1;
-  }
-  async get(key) {
-    const index = this._keys.indexOf(key.toString());
-    return index > -1 ? this._blocks[index] : undefined;
-  }
-  async *blocks() {
-    for (const block of this._blocks) {
-      yield block;
-    }
-  }
-  async *cids() {
-    for (const block of this._blocks) {
-      yield block.cid;
-    }
-  }
-  static async fromBytes(bytes) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new TypeError('fromBytes() requires a Uint8Array');
-    }
-    return decodeReaderComplete(decoder.bytesReader(bytes));
-  }
-  static async fromIterable(asyncIterable) {
-    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-      throw new TypeError('fromIterable() requires an async iterable');
-    }
-    return decodeReaderComplete(decoder.asyncIterableReader(asyncIterable));
-  }
-}
-async function decodeReaderComplete(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  const blocks = [];
-  for await (const block of decoder$1.blocks()) {
-    blocks.push(block);
-  }
-  return new CarReader(version, roots, blocks);
-}
-const __browser = true;
-
-exports.CarReader = CarReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 6706:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var util = __nccwpck_require__(3837);
-var readerBrowser = __nccwpck_require__(2284);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-const fsread = util.promisify(fs__default["default"].read);
-class CarReader extends readerBrowser.CarReader {
-  static async readRaw(fd, blockIndex) {
-    const {cid, blockLength, blockOffset} = blockIndex;
-    const bytes = new Uint8Array(blockLength);
-    let read;
-    if (typeof fd === 'number') {
-      read = (await fsread(fd, bytes, 0, blockLength, blockOffset)).bytesRead;
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      read = (await fd.read(bytes, 0, blockLength, blockOffset)).bytesRead;
-    } else {
-      throw new TypeError('Bad fd');
-    }
-    if (read !== blockLength) {
-      throw new Error(`Failed to read entire block (${ read } instead of ${ blockLength })`);
-    }
-    return {
-      cid,
-      bytes
-    };
-  }
-}
-const __browser = false;
-
-exports.CarReader = CarReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 287:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cid = __nccwpck_require__(6447);
-var encoder = __nccwpck_require__(1453);
-var iteratorChannel = __nccwpck_require__(940);
-var decoder = __nccwpck_require__(7641);
-
-class CarWriter {
-  constructor(roots, encoder) {
-    this._encoder = encoder;
-    this._mutex = encoder.setRoots(roots);
-    this._ended = false;
-  }
-  async put(block) {
-    if (!(block.bytes instanceof Uint8Array) || !block.cid) {
-      throw new TypeError('Can only write {cid, bytes} objects');
-    }
-    if (this._ended) {
-      throw new Error('Already closed');
-    }
-    const cid$1 = cid.CID.asCID(block.cid);
-    if (!cid$1) {
-      throw new TypeError('Can only write {cid, bytes} objects');
-    }
-    this._mutex = this._mutex.then(() => this._encoder.writeBlock({
-      cid: cid$1,
-      bytes: block.bytes
-    }));
-    return this._mutex;
-  }
-  async close() {
-    if (this._ended) {
-      throw new Error('Already closed');
-    }
-    await this._mutex;
-    this._ended = true;
-    return this._encoder.close();
-  }
-  static create(roots) {
-    roots = toRoots(roots);
-    const {encoder, iterator} = encodeWriter();
-    const writer = new CarWriter(roots, encoder);
-    const out = new CarWriterOut(iterator);
-    return {
-      writer,
-      out
-    };
-  }
-  static createAppender() {
-    const {encoder, iterator} = encodeWriter();
-    encoder.setRoots = () => Promise.resolve();
-    const writer = new CarWriter([], encoder);
-    const out = new CarWriterOut(iterator);
-    return {
-      writer,
-      out
-    };
-  }
-  static async updateRootsInBytes(bytes, roots) {
-    const reader = decoder.bytesReader(bytes);
-    await decoder.readHeader(reader);
-    const newHeader = encoder.createHeader(roots);
-    if (reader.pos !== newHeader.length) {
-      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ reader.pos } bytes, new header is ${ newHeader.length } bytes)`);
-    }
-    bytes.set(newHeader, 0);
-    return bytes;
-  }
-}
-class CarWriterOut {
-  constructor(iterator) {
-    this._iterator = iterator;
-  }
-  [Symbol.asyncIterator]() {
-    if (this._iterating) {
-      throw new Error('Multiple iterator not supported');
-    }
-    this._iterating = true;
-    return this._iterator;
-  }
-}
-function encodeWriter() {
-  const iw = iteratorChannel.create();
-  const {writer, iterator} = iw;
-  const encoder$1 = encoder.createEncoder(writer);
-  return {
-    encoder: encoder$1,
-    iterator
-  };
-}
-function toRoots(roots) {
-  if (roots === undefined) {
-    return [];
-  }
-  if (!Array.isArray(roots)) {
-    const cid$1 = cid.CID.asCID(roots);
-    if (!cid$1) {
-      throw new TypeError('roots must be a single CID or an array of CIDs');
-    }
-    return [cid$1];
-  }
-  const _roots = [];
-  for (const root of roots) {
-    const _root = cid.CID.asCID(root);
-    if (!_root) {
-      throw new TypeError('roots must be a single CID or an array of CIDs');
-    }
-    _roots.push(_root);
-  }
-  return _roots;
-}
-const __browser = true;
-
-exports.CarWriter = CarWriter;
-exports.CarWriterOut = CarWriterOut;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 9808:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var util = __nccwpck_require__(3837);
-var writerBrowser = __nccwpck_require__(287);
-var decoder = __nccwpck_require__(7641);
-var encoder = __nccwpck_require__(1453);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-const fsread = util.promisify(fs__default["default"].read);
-const fswrite = util.promisify(fs__default["default"].write);
-class CarWriter extends writerBrowser.CarWriter {
-  static async updateRootsInFile(fd, roots) {
-    const chunkSize = 256;
-    let bytes;
-    let offset = 0;
-    let readChunk;
-    if (typeof fd === 'number') {
-      readChunk = async () => (await fsread(fd, bytes, 0, chunkSize, offset)).bytesRead;
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      readChunk = async () => (await fd.read(bytes, 0, chunkSize, offset)).bytesRead;
-    } else {
-      throw new TypeError('Bad fd');
-    }
-    const fdReader = decoder.chunkReader(async () => {
-      bytes = new Uint8Array(chunkSize);
-      const read = await readChunk();
-      offset += read;
-      return read < chunkSize ? bytes.subarray(0, read) : bytes;
-    });
-    await decoder.readHeader(fdReader);
-    const newHeader = encoder.createHeader(roots);
-    if (fdReader.pos !== newHeader.length) {
-      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ fdReader.pos } bytes, new header is ${ newHeader.length } bytes)`);
-    }
-    if (typeof fd === 'number') {
-      await fswrite(fd, newHeader, 0, newHeader.length, 0);
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      await fd.write(newHeader, 0, newHeader.length, 0);
-    }
-  }
-}
-const __browser = false;
-
-exports.CarWriter = CarWriter;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 5203:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cborg = __nccwpck_require__(8694);
-var cid = __nccwpck_require__(6447);
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var cborg__namespace = /*#__PURE__*/_interopNamespace(cborg);
-
-const CID_CBOR_TAG = 42;
-function cidEncoder(obj) {
-  if (obj.asCID !== obj) {
-    return null;
-  }
-  const cid$1 = cid.CID.asCID(obj);
-  if (!cid$1) {
-    return null;
-  }
-  const bytes = new Uint8Array(cid$1.bytes.byteLength + 1);
-  bytes.set(cid$1.bytes, 1);
-  return [
-    new cborg__namespace.Token(cborg__namespace.Type.tag, CID_CBOR_TAG),
-    new cborg__namespace.Token(cborg__namespace.Type.bytes, bytes)
-  ];
-}
-function undefinedEncoder() {
-  throw new Error('`undefined` is not supported by the IPLD Data Model and cannot be encoded');
-}
-function numberEncoder(num) {
-  if (Number.isNaN(num)) {
-    throw new Error('`NaN` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  if (num === Infinity || num === -Infinity) {
-    throw new Error('`Infinity` and `-Infinity` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  return null;
-}
-const encodeOptions = {
-  float64: true,
-  typeEncoders: {
-    Object: cidEncoder,
-    undefined: undefinedEncoder,
-    number: numberEncoder
-  }
-};
-function cidDecoder(bytes) {
-  if (bytes[0] !== 0) {
-    throw new Error('Invalid CID for CBOR tag 42; expected leading 0x00');
-  }
-  return cid.CID.decode(bytes.subarray(1));
-}
-const decodeOptions = {
-  allowIndefinite: false,
-  coerceUndefinedToNull: true,
-  allowNaN: false,
-  allowInfinity: false,
-  allowBigInt: true,
-  strict: true,
-  useMaps: false,
-  tags: []
-};
-decodeOptions.tags[CID_CBOR_TAG] = cidDecoder;
-const name = 'dag-cbor';
-const code = 113;
-const encode = node => cborg__namespace.encode(node, encodeOptions);
-const decode = data => cborg__namespace.decode(data, decodeOptions);
-
-exports.code = code;
-exports.decode = decode;
-exports.encode = encode;
-exports.name = name;
-
-
-/***/ }),
-
-/***/ 5020:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cborg = __nccwpck_require__(8694);
-var cid = __nccwpck_require__(6447);
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var cborg__namespace = /*#__PURE__*/_interopNamespace(cborg);
-
-const CID_CBOR_TAG = 42;
-function cidEncoder(obj) {
-  if (obj.asCID !== obj) {
-    return null;
-  }
-  const cid$1 = cid.CID.asCID(obj);
-  if (!cid$1) {
-    return null;
-  }
-  const bytes = new Uint8Array(cid$1.bytes.byteLength + 1);
-  bytes.set(cid$1.bytes, 1);
-  return [
-    new cborg__namespace.Token(cborg__namespace.Type.tag, CID_CBOR_TAG),
-    new cborg__namespace.Token(cborg__namespace.Type.bytes, bytes)
-  ];
-}
-function undefinedEncoder() {
-  throw new Error('`undefined` is not supported by the IPLD Data Model and cannot be encoded');
-}
-function numberEncoder(num) {
-  if (Number.isNaN(num)) {
-    throw new Error('`NaN` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  if (num === Infinity || num === -Infinity) {
-    throw new Error('`Infinity` and `-Infinity` is not supported by the IPLD Data Model and cannot be encoded');
-  }
-  return null;
-}
-const encodeOptions = {
-  float64: true,
-  typeEncoders: {
-    Object: cidEncoder,
-    undefined: undefinedEncoder,
-    number: numberEncoder
-  }
-};
-function cidDecoder(bytes) {
-  if (bytes[0] !== 0) {
-    throw new Error('Invalid CID for CBOR tag 42; expected leading 0x00');
-  }
-  return cid.CID.decode(bytes.subarray(1));
-}
-const decodeOptions = {
-  allowIndefinite: false,
-  allowUndefined: false,
-  allowNaN: false,
-  allowInfinity: false,
-  allowBigInt: true,
-  strict: true,
-  useMaps: false,
-  tags: []
-};
-decodeOptions.tags[CID_CBOR_TAG] = cidDecoder;
-const name = 'dag-cbor';
-const code = 113;
-const encode = node => cborg__namespace.encode(node, encodeOptions);
-const decode = data => cborg__namespace.decode(data, decodeOptions);
-
-exports.code = code;
-exports.decode = decode;
-exports.encode = encode;
-exports.name = name;
-
-
-/***/ }),
-
-/***/ 7909:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.FsBlockStore = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const os_1 = __importDefault(__nccwpck_require__(2037));
-const multiformats_1 = __nccwpck_require__(5978);
-const blockstore_core_1 = __nccwpck_require__(6226);
-class FsBlockStore extends blockstore_core_1.BaseBlockstore {
-    constructor() {
-        super();
-        this.path = `${os_1.default.tmpdir()}/${(parseInt(String(Math.random() * 1e9), 10)).toString() + Date.now()}`;
-        this._opened = false;
-    }
-    async _open() {
-        if (this._opening) {
-            await this._opening;
-        }
-        else {
-            this._opening = fs_1.default.promises.mkdir(this.path);
-            await this._opening;
-            this._opened = true;
-        }
-    }
-    async put(cid, bytes) {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cidStr = cid.toString();
-        const location = `${this.path}/${cidStr}`;
-        await fs_1.default.promises.writeFile(location, bytes);
-    }
-    async get(cid) {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cidStr = cid.toString();
-        const location = `${this.path}/${cidStr}`;
-        const bytes = await fs_1.default.promises.readFile(location);
-        return bytes;
-    }
-    async has(cid) {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cidStr = cid.toString();
-        const location = `${this.path}/${cidStr}`;
-        try {
-            await fs_1.default.promises.access(location);
-            return true;
-        }
-        catch (err) {
-            return false;
-        }
-    }
-    async *blocks() {
-        if (!this._opened) {
-            await this._open();
-        }
-        const cids = await fs_1.default.promises.readdir(this.path);
-        for (const cidStr of cids) {
-            const location = `${this.path}/${cidStr}`;
-            const bytes = await fs_1.default.promises.readFile(location);
-            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
-        }
-    }
-    async close() {
-        if (this._opened) {
-            await fs_1.default.promises.rm(this.path, { recursive: true });
-        }
-        this._opened = false;
-    }
-}
-exports.FsBlockStore = FsBlockStore;
-
-
-/***/ }),
-
-/***/ 6485:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MemoryBlockStore = void 0;
-const multiformats_1 = __nccwpck_require__(5978);
-const blockstore_core_1 = __nccwpck_require__(6226);
-class MemoryBlockStore extends blockstore_core_1.BaseBlockstore {
-    constructor() {
-        super();
-        this.store = new Map();
-    }
-    async *blocks() {
-        for (const [cidStr, bytes] of this.store.entries()) {
-            yield { cid: multiformats_1.CID.parse(cidStr), bytes };
-        }
-    }
-    put(cid, bytes) {
-        this.store.set(cid.toString(), bytes);
-        return Promise.resolve();
-    }
-    get(cid) {
-        const bytes = this.store.get(cid.toString());
-        if (!bytes) {
-            throw new Error(`block with cid ${cid.toString()} no found`);
-        }
-        return Promise.resolve(bytes);
-    }
-    has(cid) {
-        return Promise.resolve(this.store.has(cid.toString()));
-    }
-    close() {
-        this.store.clear();
-        return Promise.resolve();
-    }
-}
-exports.MemoryBlockStore = MemoryBlockStore;
-
-
-/***/ }),
-
-/***/ 2167:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.unixfsImporterOptionsDefault = void 0;
-const sha2_1 = __nccwpck_require__(6987);
-exports.unixfsImporterOptionsDefault = {
-    cidVersion: 1,
-    chunker: 'fixed',
-    maxChunkSize: 262144,
-    hasher: sha2_1.sha256,
-    rawLeaves: true,
-    wrapWithDirectory: true,
-    maxChildrenPerNode: 174
-};
-
-
-/***/ }),
-
-/***/ 3225:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.pack = void 0;
-const it_last_1 = __importDefault(__nccwpck_require__(7123));
-const it_pipe_1 = __importDefault(__nccwpck_require__(7185));
-const car_1 = __nccwpck_require__(8069);
-const ipfs_unixfs_importer_1 = __nccwpck_require__(1626);
-const normalise_input_1 = __nccwpck_require__(1238);
-const memory_1 = __nccwpck_require__(6485);
-const constants_1 = __nccwpck_require__(2167);
-async function pack({ input, blockstore: userBlockstore, hasher, maxChunkSize, maxChildrenPerNode, wrapWithDirectory, rawLeaves }) {
-    if (!input || (Array.isArray(input) && !input.length)) {
-        throw new Error('missing input file(s)');
-    }
-    const blockstore = userBlockstore ? userBlockstore : new memory_1.MemoryBlockStore();
-    // Consume the source
-    const rootEntry = await (0, it_last_1.default)((0, it_pipe_1.default)((0, normalise_input_1.getNormaliser)(input), (source) => (0, ipfs_unixfs_importer_1.importer)(source, blockstore, {
-        ...constants_1.unixfsImporterOptionsDefault,
-        hasher: hasher || constants_1.unixfsImporterOptionsDefault.hasher,
-        maxChunkSize: maxChunkSize || constants_1.unixfsImporterOptionsDefault.maxChunkSize,
-        maxChildrenPerNode: maxChildrenPerNode || constants_1.unixfsImporterOptionsDefault.maxChildrenPerNode,
-        wrapWithDirectory: wrapWithDirectory === false ? false : constants_1.unixfsImporterOptionsDefault.wrapWithDirectory,
-        rawLeaves: rawLeaves == null ? constants_1.unixfsImporterOptionsDefault.rawLeaves : rawLeaves
-    })));
-    if (!rootEntry || !rootEntry.cid) {
-        throw new Error('given input could not be parsed correctly');
-    }
-    const root = rootEntry.cid;
-    const { writer, out: carOut } = await car_1.CarWriter.create([root]);
-    const carOutIter = carOut[Symbol.asyncIterator]();
-    let writingPromise;
-    const writeAll = async () => {
-        for await (const block of blockstore.blocks()) {
-            // `await` will block until all bytes in `carOut` are consumed by the user
-            // so we have backpressure here
-            await writer.put(block);
-        }
-        await writer.close();
-        if (!userBlockstore) {
-            await blockstore.close();
-        }
-    };
-    const out = {
-        [Symbol.asyncIterator]() {
-            if (writingPromise != null) {
-                throw new Error('Multiple iterator not supported');
-            }
-            // don't start writing until the user starts consuming the iterator
-            writingPromise = writeAll();
-            return {
-                async next() {
-                    const result = await carOutIter.next();
-                    if (result.done) {
-                        await writingPromise; // any errors will propagate from here
-                    }
-                    return result;
-                }
-            };
-        }
-    };
-    return { root, out };
-}
-exports.pack = pack;
-
-
-/***/ }),
-
-/***/ 1238:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getNormaliser = void 0;
-const normalise_input_single_1 = __nccwpck_require__(4304);
-const normalise_input_multiple_1 = __nccwpck_require__(9285);
-function isBytes(obj) {
-    return ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer;
-}
-function isBlob(obj) {
-    return Boolean(obj.constructor) &&
-        (obj.constructor.name === 'Blob' || obj.constructor.name === 'File') &&
-        typeof obj.stream === 'function';
-}
-function isSingle(input) {
-    return typeof input === 'string' || input instanceof String || isBytes(input) || isBlob(input) || '_readableState' in input;
-}
-/**
- * Get a single or multiple normaliser depending on the input.
- */
-function getNormaliser(input) {
-    if (isSingle(input)) {
-        return (0, normalise_input_single_1.normaliseInput)(input);
-    }
-    else {
-        return (0, normalise_input_multiple_1.normaliseInput)(input);
-    }
-}
-exports.getNormaliser = getNormaliser;
-
-
-/***/ }),
-
 /***/ 2548:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -32481,974 +31319,6 @@ exports.TextDecoder =
 
 /***/ }),
 
-/***/ 3390:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var reader = __nccwpck_require__(1053);
-var indexer = __nccwpck_require__(4450);
-var iterator = __nccwpck_require__(1563);
-var writer = __nccwpck_require__(7561);
-var indexedReader = __nccwpck_require__(4547);
-
-
-
-exports.CarReader = reader.CarReader;
-exports.CarIndexer = indexer.CarIndexer;
-exports.CarBlockIterator = iterator.CarBlockIterator;
-exports.CarCIDIterator = iterator.CarCIDIterator;
-exports.CarWriter = writer.CarWriter;
-exports.CarIndexedReader = indexedReader.CarIndexedReader;
-
-
-/***/ }),
-
-/***/ 792:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var varint = __nccwpck_require__(8018);
-var cid = __nccwpck_require__(6447);
-var Digest = __nccwpck_require__(76);
-var dagCbor = __nccwpck_require__(6477);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
-  var n = Object.create(null);
-  if (e) {
-    Object.keys(e).forEach(function (k) {
-      if (k !== 'default') {
-        var d = Object.getOwnPropertyDescriptor(e, k);
-        Object.defineProperty(n, k, d.get ? d : {
-          enumerable: true,
-          get: function () { return e[k]; }
-        });
-      }
-    });
-  }
-  n["default"] = e;
-  return Object.freeze(n);
-}
-
-var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
-var Digest__namespace = /*#__PURE__*/_interopNamespace(Digest);
-
-const CIDV0_BYTES = {
-  SHA2_256: 18,
-  LENGTH: 32,
-  DAG_PB: 112
-};
-async function readVarint(reader) {
-  const bytes = await reader.upTo(8);
-  const i = varint__default["default"].decode(bytes);
-  reader.seek(varint__default["default"].decode.bytes);
-  return i;
-}
-async function readHeader(reader) {
-  const length = await readVarint(reader);
-  if (length === 0) {
-    throw new Error('Invalid CAR header (zero length)');
-  }
-  const header = await reader.exactly(length);
-  reader.seek(length);
-  const block = dagCbor.decode(header);
-  if (block == null || Array.isArray(block) || typeof block !== 'object') {
-    throw new Error('Invalid CAR header format');
-  }
-  if (block.version !== 1) {
-    if (typeof block.version === 'string') {
-      throw new Error(`Invalid CAR version: "${ block.version }"`);
-    }
-    throw new Error(`Invalid CAR version: ${ block.version }`);
-  }
-  if (!Array.isArray(block.roots)) {
-    throw new Error('Invalid CAR header format');
-  }
-  if (Object.keys(block).filter(p => p !== 'roots' && p !== 'version').length) {
-    throw new Error('Invalid CAR header format');
-  }
-  return block;
-}
-async function readMultihash(reader) {
-  const bytes = await reader.upTo(8);
-  varint__default["default"].decode(bytes);
-  const codeLength = varint__default["default"].decode.bytes;
-  const length = varint__default["default"].decode(bytes.subarray(varint__default["default"].decode.bytes));
-  const lengthLength = varint__default["default"].decode.bytes;
-  const mhLength = codeLength + lengthLength + length;
-  const multihash = await reader.exactly(mhLength);
-  reader.seek(mhLength);
-  return multihash;
-}
-async function readCid(reader) {
-  const first = await reader.exactly(2);
-  if (first[0] === CIDV0_BYTES.SHA2_256 && first[1] === CIDV0_BYTES.LENGTH) {
-    const bytes = await reader.exactly(34);
-    reader.seek(34);
-    const multihash = Digest__namespace.decode(bytes);
-    return cid.CID.create(0, CIDV0_BYTES.DAG_PB, multihash);
-  }
-  const version = await readVarint(reader);
-  if (version !== 1) {
-    throw new Error(`Unexpected CID version (${ version })`);
-  }
-  const codec = await readVarint(reader);
-  const bytes = await readMultihash(reader);
-  const multihash = Digest__namespace.decode(bytes);
-  return cid.CID.create(version, codec, multihash);
-}
-async function readBlockHead(reader) {
-  const start = reader.pos;
-  let length = await readVarint(reader);
-  if (length === 0) {
-    throw new Error('Invalid CAR section (zero length)');
-  }
-  length += reader.pos - start;
-  const cid = await readCid(reader);
-  const blockLength = length - (reader.pos - start);
-  return {
-    cid,
-    length,
-    blockLength
-  };
-}
-async function readBlock(reader) {
-  const {cid, blockLength} = await readBlockHead(reader);
-  const bytes = await reader.exactly(blockLength);
-  reader.seek(blockLength);
-  return {
-    bytes,
-    cid
-  };
-}
-async function readBlockIndex(reader) {
-  const offset = reader.pos;
-  const {cid, length, blockLength} = await readBlockHead(reader);
-  const index = {
-    cid,
-    length,
-    blockLength,
-    offset,
-    blockOffset: reader.pos
-  };
-  reader.seek(index.blockLength);
-  return index;
-}
-function createDecoder(reader) {
-  const headerPromise = readHeader(reader);
-  return {
-    header: () => headerPromise,
-    async *blocks() {
-      await headerPromise;
-      while ((await reader.upTo(8)).length > 0) {
-        yield await readBlock(reader);
-      }
-    },
-    async *blocksIndex() {
-      await headerPromise;
-      while ((await reader.upTo(8)).length > 0) {
-        yield await readBlockIndex(reader);
-      }
-    }
-  };
-}
-function bytesReader(bytes) {
-  let pos = 0;
-  return {
-    async upTo(length) {
-      return bytes.subarray(pos, pos + Math.min(length, bytes.length - pos));
-    },
-    async exactly(length) {
-      if (length > bytes.length - pos) {
-        throw new Error('Unexpected end of data');
-      }
-      return bytes.subarray(pos, pos + length);
-    },
-    seek(length) {
-      pos += length;
-    },
-    get pos() {
-      return pos;
-    }
-  };
-}
-function chunkReader(readChunk) {
-  let pos = 0;
-  let have = 0;
-  let offset = 0;
-  let currentChunk = new Uint8Array(0);
-  const read = async length => {
-    have = currentChunk.length - offset;
-    const bufa = [currentChunk.subarray(offset)];
-    while (have < length) {
-      const chunk = await readChunk();
-      if (chunk == null) {
-        break;
-      }
-      if (have < 0) {
-        if (chunk.length > have) {
-          bufa.push(chunk.subarray(-have));
-        }
-      } else {
-        bufa.push(chunk);
-      }
-      have += chunk.length;
-    }
-    currentChunk = new Uint8Array(bufa.reduce((p, c) => p + c.length, 0));
-    let off = 0;
-    for (const b of bufa) {
-      currentChunk.set(b, off);
-      off += b.length;
-    }
-    offset = 0;
-  };
-  return {
-    async upTo(length) {
-      if (currentChunk.length - offset < length) {
-        await read(length);
-      }
-      return currentChunk.subarray(offset, offset + Math.min(currentChunk.length - offset, length));
-    },
-    async exactly(length) {
-      if (currentChunk.length - offset < length) {
-        await read(length);
-      }
-      if (currentChunk.length - offset < length) {
-        throw new Error('Unexpected end of data');
-      }
-      return currentChunk.subarray(offset, offset + length);
-    },
-    seek(length) {
-      pos += length;
-      offset += length;
-    },
-    get pos() {
-      return pos;
-    }
-  };
-}
-function asyncIterableReader(asyncIterable) {
-  const iterator = asyncIterable[Symbol.asyncIterator]();
-  async function readChunk() {
-    const next = await iterator.next();
-    if (next.done) {
-      return null;
-    }
-    return next.value;
-  }
-  return chunkReader(readChunk);
-}
-
-exports.asyncIterableReader = asyncIterableReader;
-exports.bytesReader = bytesReader;
-exports.chunkReader = chunkReader;
-exports.createDecoder = createDecoder;
-exports.readBlockHead = readBlockHead;
-exports.readHeader = readHeader;
-
-
-/***/ }),
-
-/***/ 7903:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var varint = __nccwpck_require__(8018);
-var dagCbor = __nccwpck_require__(6477);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var varint__default = /*#__PURE__*/_interopDefaultLegacy(varint);
-
-function createHeader(roots) {
-  const headerBytes = dagCbor.encode({
-    version: 1,
-    roots
-  });
-  const varintBytes = varint__default["default"].encode(headerBytes.length);
-  const header = new Uint8Array(varintBytes.length + headerBytes.length);
-  header.set(varintBytes, 0);
-  header.set(headerBytes, varintBytes.length);
-  return header;
-}
-function createEncoder(writer) {
-  return {
-    async setRoots(roots) {
-      const bytes = createHeader(roots);
-      await writer.write(bytes);
-    },
-    async writeBlock(block) {
-      const {cid, bytes} = block;
-      await writer.write(new Uint8Array(varint__default["default"].encode(cid.bytes.length + bytes.length)));
-      await writer.write(cid.bytes);
-      if (bytes.length) {
-        await writer.write(bytes);
-      }
-    },
-    async close() {
-      return writer.end();
-    }
-  };
-}
-
-exports.createEncoder = createEncoder;
-exports.createHeader = createHeader;
-
-
-/***/ }),
-
-/***/ 4547:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var stream = __nccwpck_require__(2781);
-var cid = __nccwpck_require__(6447);
-var indexer = __nccwpck_require__(4450);
-var reader = __nccwpck_require__(1053);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-class CarIndexedReader {
-  constructor(version, path, roots, index, order) {
-    this._version = version;
-    this._path = path;
-    this._roots = roots;
-    this._index = index;
-    this._order = order;
-    this._fd = null;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  async has(key) {
-    return this._index.has(key.toString());
-  }
-  async get(key) {
-    const blockIndex = this._index.get(key.toString());
-    if (!blockIndex) {
-      return undefined;
-    }
-    if (!this._fd) {
-      this._fd = await fs__default["default"].promises.open(this._path, 'r');
-    }
-    const readIndex = {
-      cid: key,
-      length: 0,
-      offset: 0,
-      blockLength: blockIndex.blockLength,
-      blockOffset: blockIndex.blockOffset
-    };
-    return reader.CarReader.readRaw(this._fd, readIndex);
-  }
-  async *blocks() {
-    for (const cidStr of this._order) {
-      const block = await this.get(cid.CID.parse(cidStr));
-      if (!block) {
-        throw new Error('Unexpected internal error');
-      }
-      yield block;
-    }
-  }
-  async *cids() {
-    for (const cidStr of this._order) {
-      yield cid.CID.parse(cidStr);
-    }
-  }
-  async close() {
-    if (this._fd) {
-      return this._fd.close();
-    }
-  }
-  static async fromFile(path) {
-    if (typeof path !== 'string') {
-      throw new TypeError('fromFile() requires a file path string');
-    }
-    const iterable = await indexer.CarIndexer.fromIterable(stream.Readable.from(fs__default["default"].createReadStream(path)));
-    const index = new Map();
-    const order = [];
-    for await (const {cid, blockLength, blockOffset} of iterable) {
-      const cidStr = cid.toString();
-      index.set(cidStr, {
-        blockLength,
-        blockOffset
-      });
-      order.push(cidStr);
-    }
-    return new CarIndexedReader(iterable.version, path, await iterable.getRoots(), index, order);
-  }
-}
-const __browser = false;
-
-exports.CarIndexedReader = CarIndexedReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 4450:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(792);
-
-class CarIndexer {
-  constructor(version, roots, iterator) {
-    this._version = version;
-    this._roots = roots;
-    this._iterator = iterator;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  [Symbol.asyncIterator]() {
-    return this._iterator;
-  }
-  static async fromBytes(bytes) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new TypeError('fromBytes() requires a Uint8Array');
-    }
-    return decodeIndexerComplete(decoder.bytesReader(bytes));
-  }
-  static async fromIterable(asyncIterable) {
-    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-      throw new TypeError('fromIterable() requires an async iterable');
-    }
-    return decodeIndexerComplete(decoder.asyncIterableReader(asyncIterable));
-  }
-}
-async function decodeIndexerComplete(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  return new CarIndexer(version, roots, decoder$1.blocksIndex());
-}
-
-exports.CarIndexer = CarIndexer;
-
-
-/***/ }),
-
-/***/ 9405:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-function noop() {
-}
-function create() {
-  const chunkQueue = [];
-  let drainer = null;
-  let drainerResolver = noop;
-  let ended = false;
-  let outWait = null;
-  let outWaitResolver = noop;
-  const makeDrainer = () => {
-    if (!drainer) {
-      drainer = new Promise(resolve => {
-        drainerResolver = () => {
-          drainer = null;
-          drainerResolver = noop;
-          resolve();
-        };
-      });
-    }
-    return drainer;
-  };
-  const writer = {
-    write(chunk) {
-      chunkQueue.push(chunk);
-      const drainer = makeDrainer();
-      outWaitResolver();
-      return drainer;
-    },
-    async end() {
-      ended = true;
-      const drainer = makeDrainer();
-      outWaitResolver();
-      return drainer;
-    }
-  };
-  const iterator = {
-    async next() {
-      const chunk = chunkQueue.shift();
-      if (chunk) {
-        if (chunkQueue.length === 0) {
-          drainerResolver();
-        }
-        return {
-          done: false,
-          value: chunk
-        };
-      }
-      if (ended) {
-        drainerResolver();
-        return {
-          done: true,
-          value: undefined
-        };
-      }
-      if (!outWait) {
-        outWait = new Promise(resolve => {
-          outWaitResolver = () => {
-            outWait = null;
-            outWaitResolver = noop;
-            return resolve(iterator.next());
-          };
-        });
-      }
-      return outWait;
-    }
-  };
-  return {
-    writer,
-    iterator
-  };
-}
-
-exports.create = create;
-
-
-/***/ }),
-
-/***/ 1563:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(792);
-
-class CarIteratorBase {
-  constructor(version, roots, iterable) {
-    this._version = version;
-    this._roots = roots;
-    this._iterable = iterable;
-    this._decoded = false;
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-}
-class CarBlockIterator extends CarIteratorBase {
-  [Symbol.asyncIterator]() {
-    if (this._decoded) {
-      throw new Error('Cannot decode more than once');
-    }
-    if (!this._iterable) {
-      throw new Error('Block iterable not found');
-    }
-    this._decoded = true;
-    return this._iterable[Symbol.asyncIterator]();
-  }
-  static async fromBytes(bytes) {
-    const {version, roots, iterator} = await fromBytes(bytes);
-    return new CarBlockIterator(version, roots, iterator);
-  }
-  static async fromIterable(asyncIterable) {
-    const {version, roots, iterator} = await fromIterable(asyncIterable);
-    return new CarBlockIterator(version, roots, iterator);
-  }
-}
-class CarCIDIterator extends CarIteratorBase {
-  [Symbol.asyncIterator]() {
-    if (this._decoded) {
-      throw new Error('Cannot decode more than once');
-    }
-    if (!this._iterable) {
-      throw new Error('Block iterable not found');
-    }
-    this._decoded = true;
-    const iterable = this._iterable[Symbol.asyncIterator]();
-    return {
-      async next() {
-        const next = await iterable.next();
-        if (next.done) {
-          return next;
-        }
-        return {
-          done: false,
-          value: next.value.cid
-        };
-      }
-    };
-  }
-  static async fromBytes(bytes) {
-    const {version, roots, iterator} = await fromBytes(bytes);
-    return new CarCIDIterator(version, roots, iterator);
-  }
-  static async fromIterable(asyncIterable) {
-    const {version, roots, iterator} = await fromIterable(asyncIterable);
-    return new CarCIDIterator(version, roots, iterator);
-  }
-}
-async function fromBytes(bytes) {
-  if (!(bytes instanceof Uint8Array)) {
-    throw new TypeError('fromBytes() requires a Uint8Array');
-  }
-  return decodeIterator(decoder.bytesReader(bytes));
-}
-async function fromIterable(asyncIterable) {
-  if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-    throw new TypeError('fromIterable() requires an async iterable');
-  }
-  return decodeIterator(decoder.asyncIterableReader(asyncIterable));
-}
-async function decodeIterator(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  return {
-    version,
-    roots,
-    iterator: decoder$1.blocks()
-  };
-}
-
-exports.CarBlockIterator = CarBlockIterator;
-exports.CarCIDIterator = CarCIDIterator;
-exports.CarIteratorBase = CarIteratorBase;
-
-
-/***/ }),
-
-/***/ 3731:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var decoder = __nccwpck_require__(792);
-
-class CarReader {
-  constructor(version, roots, blocks) {
-    this._version = version;
-    this._roots = roots;
-    this._blocks = blocks;
-    this._keys = blocks.map(b => b.cid.toString());
-  }
-  get version() {
-    return this._version;
-  }
-  async getRoots() {
-    return this._roots;
-  }
-  async has(key) {
-    return this._keys.indexOf(key.toString()) > -1;
-  }
-  async get(key) {
-    const index = this._keys.indexOf(key.toString());
-    return index > -1 ? this._blocks[index] : undefined;
-  }
-  async *blocks() {
-    for (const block of this._blocks) {
-      yield block;
-    }
-  }
-  async *cids() {
-    for (const block of this._blocks) {
-      yield block.cid;
-    }
-  }
-  static async fromBytes(bytes) {
-    if (!(bytes instanceof Uint8Array)) {
-      throw new TypeError('fromBytes() requires a Uint8Array');
-    }
-    return decodeReaderComplete(decoder.bytesReader(bytes));
-  }
-  static async fromIterable(asyncIterable) {
-    if (!asyncIterable || !(typeof asyncIterable[Symbol.asyncIterator] === 'function')) {
-      throw new TypeError('fromIterable() requires an async iterable');
-    }
-    return decodeReaderComplete(decoder.asyncIterableReader(asyncIterable));
-  }
-}
-async function decodeReaderComplete(reader) {
-  const decoder$1 = decoder.createDecoder(reader);
-  const {version, roots} = await decoder$1.header();
-  const blocks = [];
-  for await (const block of decoder$1.blocks()) {
-    blocks.push(block);
-  }
-  return new CarReader(version, roots, blocks);
-}
-const __browser = true;
-
-exports.CarReader = CarReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 1053:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var util = __nccwpck_require__(3837);
-var readerBrowser = __nccwpck_require__(3731);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-const fsread = util.promisify(fs__default["default"].read);
-class CarReader extends readerBrowser.CarReader {
-  static async readRaw(fd, blockIndex) {
-    const {cid, blockLength, blockOffset} = blockIndex;
-    const bytes = new Uint8Array(blockLength);
-    let read;
-    if (typeof fd === 'number') {
-      read = (await fsread(fd, bytes, 0, blockLength, blockOffset)).bytesRead;
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      read = (await fd.read(bytes, 0, blockLength, blockOffset)).bytesRead;
-    } else {
-      throw new TypeError('Bad fd');
-    }
-    if (read !== blockLength) {
-      throw new Error(`Failed to read entire block (${ read } instead of ${ blockLength })`);
-    }
-    return {
-      cid,
-      bytes
-    };
-  }
-}
-const __browser = false;
-
-exports.CarReader = CarReader;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 7680:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var cid = __nccwpck_require__(6447);
-var encoder = __nccwpck_require__(7903);
-var iteratorChannel = __nccwpck_require__(9405);
-var decoder = __nccwpck_require__(792);
-
-class CarWriter {
-  constructor(roots, encoder) {
-    this._encoder = encoder;
-    this._mutex = encoder.setRoots(roots);
-    this._ended = false;
-  }
-  async put(block) {
-    if (!(block.bytes instanceof Uint8Array) || !block.cid) {
-      throw new TypeError('Can only write {cid, bytes} objects');
-    }
-    if (this._ended) {
-      throw new Error('Already closed');
-    }
-    const cid$1 = cid.CID.asCID(block.cid);
-    if (!cid$1) {
-      throw new TypeError('Can only write {cid, bytes} objects');
-    }
-    this._mutex = this._mutex.then(() => this._encoder.writeBlock({
-      cid: cid$1,
-      bytes: block.bytes
-    }));
-    return this._mutex;
-  }
-  async close() {
-    if (this._ended) {
-      throw new Error('Already closed');
-    }
-    await this._mutex;
-    this._ended = true;
-    return this._encoder.close();
-  }
-  static create(roots) {
-    roots = toRoots(roots);
-    const {encoder, iterator} = encodeWriter();
-    const writer = new CarWriter(roots, encoder);
-    const out = new CarWriterOut(iterator);
-    return {
-      writer,
-      out
-    };
-  }
-  static createAppender() {
-    const {encoder, iterator} = encodeWriter();
-    encoder.setRoots = () => Promise.resolve();
-    const writer = new CarWriter([], encoder);
-    const out = new CarWriterOut(iterator);
-    return {
-      writer,
-      out
-    };
-  }
-  static async updateRootsInBytes(bytes, roots) {
-    const reader = decoder.bytesReader(bytes);
-    await decoder.readHeader(reader);
-    const newHeader = encoder.createHeader(roots);
-    if (reader.pos !== newHeader.length) {
-      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ reader.pos } bytes, new header is ${ newHeader.length } bytes)`);
-    }
-    bytes.set(newHeader, 0);
-    return bytes;
-  }
-}
-class CarWriterOut {
-  constructor(iterator) {
-    this._iterator = iterator;
-  }
-  [Symbol.asyncIterator]() {
-    if (this._iterating) {
-      throw new Error('Multiple iterator not supported');
-    }
-    this._iterating = true;
-    return this._iterator;
-  }
-}
-function encodeWriter() {
-  const iw = iteratorChannel.create();
-  const {writer, iterator} = iw;
-  const encoder$1 = encoder.createEncoder(writer);
-  return {
-    encoder: encoder$1,
-    iterator
-  };
-}
-function toRoots(roots) {
-  if (roots === undefined) {
-    return [];
-  }
-  if (!Array.isArray(roots)) {
-    const cid$1 = cid.CID.asCID(roots);
-    if (!cid$1) {
-      throw new TypeError('roots must be a single CID or an array of CIDs');
-    }
-    return [cid$1];
-  }
-  const _roots = [];
-  for (const root of roots) {
-    const _root = cid.CID.asCID(root);
-    if (!_root) {
-      throw new TypeError('roots must be a single CID or an array of CIDs');
-    }
-    _roots.push(_root);
-  }
-  return _roots;
-}
-const __browser = true;
-
-exports.CarWriter = CarWriter;
-exports.CarWriterOut = CarWriterOut;
-exports.__browser = __browser;
-
-
-/***/ }),
-
-/***/ 7561:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-var fs = __nccwpck_require__(7147);
-var util = __nccwpck_require__(3837);
-var writerBrowser = __nccwpck_require__(7680);
-var decoder = __nccwpck_require__(792);
-var encoder = __nccwpck_require__(7903);
-
-function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-var fs__default = /*#__PURE__*/_interopDefaultLegacy(fs);
-
-const fsread = util.promisify(fs__default["default"].read);
-const fswrite = util.promisify(fs__default["default"].write);
-class CarWriter extends writerBrowser.CarWriter {
-  static async updateRootsInFile(fd, roots) {
-    const chunkSize = 256;
-    let bytes;
-    let offset = 0;
-    let readChunk;
-    if (typeof fd === 'number') {
-      readChunk = async () => (await fsread(fd, bytes, 0, chunkSize, offset)).bytesRead;
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      readChunk = async () => (await fd.read(bytes, 0, chunkSize, offset)).bytesRead;
-    } else {
-      throw new TypeError('Bad fd');
-    }
-    const fdReader = decoder.chunkReader(async () => {
-      bytes = new Uint8Array(chunkSize);
-      const read = await readChunk();
-      offset += read;
-      return read < chunkSize ? bytes.subarray(0, read) : bytes;
-    });
-    await decoder.readHeader(fdReader);
-    const newHeader = encoder.createHeader(roots);
-    if (fdReader.pos !== newHeader.length) {
-      throw new Error(`updateRoots() can only overwrite a header of the same length (old header is ${ fdReader.pos } bytes, new header is ${ newHeader.length } bytes)`);
-    }
-    if (typeof fd === 'number') {
-      await fswrite(fd, newHeader, 0, newHeader.length, 0);
-    } else if (typeof fd === 'object' && typeof fd.read === 'function') {
-      await fd.write(newHeader, 0, newHeader.length, 0);
-    }
-  }
-}
-const __browser = false;
-
-exports.CarWriter = CarWriter;
-exports.__browser = __browser;
-
-
-/***/ }),
-
 /***/ 2215:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -33609,7 +31479,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.pack = void 0;
 const it_last_1 = __importDefault(__nccwpck_require__(7123));
 const it_pipe_1 = __importDefault(__nccwpck_require__(7185));
-const car_1 = __nccwpck_require__(3390);
+const car_1 = __nccwpck_require__(2805);
 const ipfs_unixfs_importer_1 = __nccwpck_require__(1626);
 const normalise_input_1 = __nccwpck_require__(6239);
 const memory_1 = __nccwpck_require__(3204);
@@ -33718,7 +31588,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.unpackStream = exports.unpack = void 0;
 const browser_readablestream_to_it_1 = __importDefault(__nccwpck_require__(664));
-const iterator_1 = __nccwpck_require__(1563);
+const iterator_1 = __nccwpck_require__(8229);
 const ipfs_unixfs_exporter_1 = __nccwpck_require__(2190);
 const verifying_get_only_blockstore_1 = __nccwpck_require__(2322);
 const memory_1 = __nccwpck_require__(3204);
@@ -33987,8 +31857,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
-// import github from "@actions/github";
-// import { Credentials } from "./credentials";
 const parseDelegates_1 = __nccwpck_require__(7326);
 const uploadIPFS_1 = __nccwpck_require__(9634);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
@@ -34358,9 +32226,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
-//import { CarReader } from '@ipld/car';
 const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
+function checkCIDs(localCID, remoteCID, remoteServiceName) {
+    if (localCID === remoteCID) {
+        console.log(`${remoteServiceName} CID equals CID created locally: ${localCID}`);
+    }
+    else {
+        throw new Error(`${remoteServiceName} CID differs from locally generated CID. Local: ${localCID}. ${remoteServiceName}: ${remoteCID}`);
+    }
+}
 //we use this function to generate the IPFS CID before
 //uploading the data to the pinning services.
 //This way we ensure the CID is the same across different pinning
@@ -34375,6 +32250,7 @@ function dataToCar(data) {
 }
 exports.dataToCar = dataToCar;
 //upload car file to both web3.storage and nft.storage
+//throws error if any CID doesn't match
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
         const localCID = (yield car.getRoots()).toString();
@@ -34382,23 +32258,13 @@ function uploadCarFileIPFS(car, tokens) {
         if (tokens.WEB3_STORAGE_TOKEN) {
             const web3StorageClient = new web3_storage_1.Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
             const web3StorageCID = yield web3StorageClient.putCar(car);
-            if (localCID === web3StorageCID) {
-                console.log('web3Storage CID equals CID created locally: ', web3StorageCID);
-            }
-            else {
-                throw new Error(`web3Storage CID differs from locally generated CID. Local: ${localCID}. Web3Storage: ${web3StorageCID}`);
-            }
+            checkCIDs(localCID, web3StorageCID, 'web3.storage');
         }
         //nft.storage
         if (tokens.NFT_STORAGE_TOKEN) {
             const nftStorageClient = new nft_storage_1.NFTStorage({ token: tokens.NFT_STORAGE_TOKEN });
             const nftStorageCID = yield nftStorageClient.storeCar(car);
-            if (localCID === nftStorageCID) {
-                console.log('nftStorage CID equals CID created locally: ', nftStorageCID);
-            }
-            else {
-                throw new Error('nftStorage CID differs from locally generated CID');
-            }
+            checkCIDs(localCID, nftStorageCID, 'nft.storage');
         }
         return localCID;
     });
@@ -34407,7 +32273,6 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-            //update below
             const fileContents = fs_1.default.readFileSync(filePath);
             const car = yield dataToCar(fileContents);
             return uploadCarFileIPFS(car, tokens);
@@ -37501,7 +35366,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 var streamingIterables = __nccwpck_require__(8205);
 var pRetry = __nccwpck_require__(2548);
 var treewalk = __nccwpck_require__(6025);
-var pack = __nccwpck_require__(3225);
+var pack = __nccwpck_require__(8163);
 __nccwpck_require__(6447);
 var throttledQueue = __nccwpck_require__(7855);
 var token = __nccwpck_require__(4388);
@@ -37509,7 +35374,7 @@ var fetch = __nccwpck_require__(4975);
 var formData = __nccwpck_require__(3670);
 __nccwpck_require__(9620);
 var file = __nccwpck_require__(973);
-var fs = __nccwpck_require__(7909);
+var fs = __nccwpck_require__(2689);
 var gateway = __nccwpck_require__(9763);
 var bsCarReader = __nccwpck_require__(569);
 var pipe = __nccwpck_require__(7185);
@@ -38353,16 +36218,16 @@ exports.toAsyncIterable = toAsyncIterable;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var pack = __nccwpck_require__(3225);
+var pack = __nccwpck_require__(8163);
 __nccwpck_require__(6447);
 var Block = __nccwpck_require__(4594);
 var sha2 = __nccwpck_require__(6987);
-var dagCbor = __nccwpck_require__(5020);
+var dagCbor = __nccwpck_require__(6477);
 __nccwpck_require__(4975);
 var formData = __nccwpck_require__(3670);
 __nccwpck_require__(9620);
 var file = __nccwpck_require__(973);
-var fs = __nccwpck_require__(7909);
+var fs = __nccwpck_require__(2689);
 var gateway = __nccwpck_require__(9763);
 var bsCarReader = __nccwpck_require__(569);
 
@@ -38800,7 +36665,7 @@ var pack = __nccwpck_require__(7729);
 var parseLinkHeader = __nccwpck_require__(3852);
 var unpack = __nccwpck_require__(9041);
 var treewalk = __nccwpck_require__(6025);
-var car = __nccwpck_require__(3390);
+var car = __nccwpck_require__(2805);
 var filesFromPath = __nccwpck_require__(5090);
 var throttledQueue = __nccwpck_require__(7855);
 var _fetch = __nccwpck_require__(4975);

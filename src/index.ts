@@ -1,6 +1,4 @@
 import * as core from "@actions/core";
-// import github from "@actions/github";
-// import { Credentials } from "./credentials";
 import { parseDelegates } from "./parseDelegates";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
 import fs from 'fs';

@@ -329,15 +329,6 @@
   resolved "https://registry.yarnpkg.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
-"@ipld/car@3.2.3":
-  version "3.2.3"
-  resolved "https://registry.yarnpkg.com/@ipld/car/-/car-3.2.3.tgz#5a3fa8576dde476a9d06229e383ded0bb16c859e"
-  integrity sha512-pXE5mFJlXzJVaBwqAJKGlKqMmxq8H2SLEWBJgkeBDPBIN8ZbscPc3I9itkSQSlS/s6Fgx35Ri3LDTDtodQjCCQ==
-  dependencies:
-    "@ipld/dag-cbor" "^7.0.0"
-    multiformats "^9.5.4"
-    varint "^6.0.0"
-
 "@ipld/car@^3.0.1", "@ipld/car@^3.1.4", "@ipld/car@^3.2.3":
   version "3.2.4"
   resolved "https://registry.yarnpkg.com/@ipld/car/-/car-3.2.4.tgz#115951ba2255ec51d865773a074e422c169fb01c"
@@ -1817,33 +1808,6 @@ ip-regex@^4.0.0:
   version "4.3.0"
   resolved "https://registry.yarnpkg.com/ip-regex/-/ip-regex-4.3.0.tgz#687275ab0f57fa76978ff8f4dddc8a23d5990db5"
   integrity sha512-B9ZWJxHHOHUhUjCPrMpLD4xEq35bUTClHM1S6CBU5ixQnkZmwipwgc96vAd7AAGM9TGHvJR+Uss+/Ak6UphK+Q==
-
-ipfs-car@0.9.2:
-  version "0.9.2"
-  resolved "https://registry.yarnpkg.com/ipfs-car/-/ipfs-car-0.9.2.tgz#0b7431004afedafb6958dc7a02a327b7e57ce939"
-  integrity sha512-OUKgQqCN9C16eyu9OSOXe2CyRUL/jemWDODfALihvwRHfLLU6tKQVb8rhjhheWhQ1InlFBMgfIiLNxGpUSqOXA==
-  dependencies:
-    "@ipld/car" "^3.2.3"
-    "@web-std/blob" "^3.0.1"
-    bl "^5.0.0"
-    blockstore-core "^1.0.2"
-    browser-readablestream-to-it "^1.0.2"
-    idb-keyval "^6.0.3"
-    interface-blockstore "^2.0.2"
-    ipfs-core-types "^0.8.3"
-    ipfs-core-utils "^0.12.1"
-    ipfs-unixfs-exporter "^7.0.4"
-    ipfs-unixfs-importer "^9.0.4"
-    ipfs-utils "^9.0.2"
-    it-all "^1.0.5"
-    it-last "^1.0.5"
-    it-pipe "^1.1.0"
-    meow "^9.0.0"
-    move-file "^2.1.0"
-    multiformats "^9.6.3"
-    stream-to-it "^0.2.3"
-    streaming-iterables "^6.0.0"
-    uint8arrays "^3.0.0"
 
 ipfs-car@^0.6.2:
   version "0.6.2"
