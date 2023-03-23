@@ -1,4 +1,4 @@
-name: 'Deploy Delegates Test Tyler'
+name: 'Deploy Delegates'
 description: 'Parse and upload delegates information to a decentralized storage'
 branding:
   icon: 'award'
@@ -16,12 +16,6 @@ inputs:
     description: 'Path to the tags mapping file'
     required: true
     default: 'governance/delegates/meta/tags.json'
-  infura-id:
-    description: 'Infura project id'
-    required: false
-  infura-secret:
-    description: 'Infura API key secret'
-    required: false
   web3-storage-token:
     description: 'web3.storage token'
     required: false
