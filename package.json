@@ -1,7 +1,7 @@
 {
   "name": "action-deploy-delegates",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Aggregates delegates data in the community repo and pushes to decentralized storage",
   "main": "lib/index.js",
   "type": "commonjs",
@@ -17,7 +17,8 @@
     "@actions/github": "^5.1.1",
     "dotenv": "^16.0.3",
     "front-matter": "^4.0.2",
-    "ipfs-http-client": "56.0.2"
+    "nft.storage": "^7.0.3",
+    "web3.storage": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^18.11.18",

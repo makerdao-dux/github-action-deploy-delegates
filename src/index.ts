@@ -1,6 +1,4 @@
 import * as core from "@actions/core";
-// import github from "@actions/github";
-import { Credentials } from "./credentials";
 import { parseDelegates } from "./parseDelegates";
 import { uploadFileIPFS, uploadTextIPFS } from "./uploadIPFS";
 import fs from 'fs';
@@ -11,12 +9,10 @@ async function run() {
     const delegatesFolder = core.getInput("delegates-folder");
     const delegateVotingCommitteesFolder = core.getInput("voting-committees-folder");
     const tagsPath = core.getInput("tags-file");
-    const INFURA_ID = core.getInput("infura-id");
-    const INFURA_SECRET_KEY = core.getInput("infura-secret");
-    const credentials: Credentials = {
-      INFURA_ID,
-      INFURA_SECRET_KEY,
-    };
+    const WEB3_STORAGE_TOKEN = core.getInput("web3-storage-token");
+    const NFT_STORAGE_TOKEN = core.getInput("nft-storage-token");
+    
+    const tokens =  { WEB3_STORAGE_TOKEN, NFT_STORAGE_TOKEN };
 
     const data = await parseDelegates(delegatesFolder, tagsPath);
 
@@ -31,7 +27,7 @@ async function run() {
 
         try {
           if (image) {
-            const hashImage = await uploadFileIPFS(image, credentials);
+            const hashImage = await uploadFileIPFS(image, tokens);
             delegate.image = hashImage;
           }
         } catch (e: any) {
@@ -54,7 +50,7 @@ async function run() {
         try {
 
           if (image) {
-            const hashImage = await uploadFileIPFS(image, credentials);
+            const hashImage = await uploadFileIPFS(image, tokens);
             votingCommittee.image = hashImage;
           }
         } catch (e: any) {
@@ -79,7 +75,7 @@ async function run() {
 
     const uploadedHash = await uploadTextIPFS(
       fileContents,
-      credentials
+      tokens,
     );
     console.log("Uploaded hash", uploadedHash);
 
