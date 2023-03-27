@@ -1726,10 +1726,6 @@ function checkBypass(reqUrl) {
     if (!reqUrl.hostname) {
         return false;
     }
-    const reqHost = reqUrl.hostname;
-    if (isLoopbackAddress(reqHost)) {
-        return true;
-    }
     const noProxy = process.env['no_proxy'] || process.env['NO_PROXY'] || '';
     if (!noProxy) {
         return false;
@@ -1755,24 +1751,13 @@ function checkBypass(reqUrl) {
         .split(',')
         .map(x => x.trim().toUpperCase())
         .filter(x => x)) {
-        if (upperNoProxyItem === '*' ||
-            upperReqHosts.some(x => x === upperNoProxyItem ||
-                x.endsWith(`.${upperNoProxyItem}`) ||
-                (upperNoProxyItem.startsWith('.') &&
-                    x.endsWith(`${upperNoProxyItem}`)))) {
+        if (upperReqHosts.some(x => x === upperNoProxyItem)) {
             return true;
         }
     }
     return false;
 }
 exports.checkBypass = checkBypass;
-function isLoopbackAddress(host) {
-    const hostLower = host.toLowerCase();
-    return (hostLower === 'localhost' ||
-        hostLower.startsWith('127.') ||
-        hostLower.startsWith('[::1]') ||
-        hostLower.startsWith('[0:0:0:0:0:0:0:1]'));
-}
 //# sourceMappingURL=proxy.js.map
 
 /***/ }),
@@ -9725,7 +9710,7 @@ function patch (fs) {
         var backoff = 0;
         fs$rename(from, to, function CB (er) {
           if (er
-              && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY")
+              && (er.code === "EACCES" || er.code === "EPERM")
               && Date.now() - start < 60000) {
             setTimeout(function() {
               fs.stat(to, function (stater, st) {
@@ -32228,6 +32213,12 @@ exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
 const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
+const RETRY_DELAY = 10 * 1000; //10 seconds
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
 function checkCIDs(localCID, remoteCID, remoteServiceName) {
     if (localCID === remoteCID) {
         console.log(`${remoteServiceName} CID equals CID created locally: ${localCID}`);
@@ -32271,19 +32262,29 @@ function uploadCarFileIPFS(car, tokens) {
 }
 function uploadFileIPFS(filePath, tokens, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
+        let car;
         try {
             console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
             const fileContents = fs_1.default.readFileSync(filePath);
-            const car = yield dataToCar(fileContents);
+            car = yield dataToCar(fileContents);
             return uploadCarFileIPFS(car, tokens);
         }
         catch (e) {
             if (retries > 0) {
                 console.log('Retrying upload', retries);
+                yield sleep(RETRY_DELAY);
                 return uploadFileIPFS(filePath, tokens, retries - 1);
             }
             else {
-                throw e;
+                if (car) {
+                    console.error('error uploading file', filePath, e);
+                    const localCID = (yield car.getRoots()).toString();
+                    console.error('using locally generated CID: ', localCID);
+                    return localCID;
+                }
+                else {
+                    throw e;
+                }
             }
         }
     });
