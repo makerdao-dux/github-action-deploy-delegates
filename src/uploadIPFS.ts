@@ -3,6 +3,14 @@ import { NFTStorage, CarReader, Blob } from 'nft.storage';
 import { ApiTokens } from './apiTokens';
 import fs from 'fs';
 
+const RETRY_DELAY = 10 * 1000; //10 seconds
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function checkCIDs(localCID: string, remoteCID: string, remoteServiceName: string){
   if (localCID === remoteCID ) {
     console.log(`${remoteServiceName} CID equals CID created locally: ${localCID}`);
@@ -50,17 +58,26 @@ export async function uploadFileIPFS(
   tokens: ApiTokens,
   retries: number = 3
 ): Promise<string> {
+  let car;
   try {
     console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
     const fileContents = fs.readFileSync(filePath);
-    const car = await dataToCar(fileContents);
+    car = await dataToCar(fileContents);
     return uploadCarFileIPFS(car, tokens);
   } catch(e) {
     if (retries > 0) {
       console.log('Retrying upload', retries);
+      await sleep(RETRY_DELAY);
       return uploadFileIPFS(filePath, tokens, retries - 1);
     } else {
-      throw e;
+      if (car) {
+        console.error('error uploading file', filePath, e);
+        const localCID = (await car.getRoots()).toString();
+        console.error('using locally generated CID: ', localCID);
+        return localCID;
+      } else {
+        throw e;
+      }
     }
   }
 }
