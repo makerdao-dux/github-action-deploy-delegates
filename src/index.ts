@@ -21,7 +21,7 @@ async function run() {
     }
 
     // Upload all the images to IPFS
-    const delegates = await Promise.all(
+    const delegatesResults = await Promise.allSettled(
       data.delegates.map(async (delegate) => {
         const image = delegate.image;
 
@@ -38,7 +38,10 @@ async function run() {
         return delegate;
       })
     );
-
+    const delegates = delegatesResults.
+      filter(d => d.status === 'fulfilled')
+      // @ts-ignore
+      .map(d => d.value);
     console.log('Reading voting committees');
     const votingCommittees = await parseVotingCommittees(delegateVotingCommitteesFolder);
 

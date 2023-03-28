@@ -31860,7 +31860,7 @@ function run() {
                 throw new Error("No data found");
             }
             // Upload all the images to IPFS
-            const delegates = yield Promise.all(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
+            const delegatesResults = yield Promise.allSettled(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
                 const image = delegate.image;
                 try {
                     if (image) {
@@ -31874,6 +31874,10 @@ function run() {
                 }
                 return delegate;
             })));
+            const delegates = delegatesResults.
+                filter(d => d.status === 'fulfilled')
+                // @ts-ignore
+                .map(d => d.value);
             console.log('Reading voting committees');
             const votingCommittees = yield (0, parseVotingCommittees_1.parseVotingCommittees)(delegateVotingCommitteesFolder);
             console.log('Uploading voting committees images to ipfs');
