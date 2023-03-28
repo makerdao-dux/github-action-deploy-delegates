@@ -60,11 +60,11 @@ export async function uploadFileIPFS(
 ): Promise<string> {
   let car;
   try {
-    console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
+    console.log("Uploading file to IPFS....", filePath, 'Retries remaining: ', retries);
     const fileContents = fs.readFileSync(filePath);
     car = await dataToCar(fileContents);
     return uploadCarFileIPFS(car, tokens);
-  } catch(e) {
+  } catch(e: any) {
     if (retries > 0) {
       console.log('Retrying upload', retries);
       await sleep(RETRY_DELAY);
@@ -76,6 +76,7 @@ export async function uploadFileIPFS(
         console.error('using locally generated CID: ', localCID);
         return localCID;
       } else {
+        console.error('propogating error up');
         throw e;
       }
     }
