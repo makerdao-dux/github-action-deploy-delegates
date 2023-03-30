@@ -32217,7 +32217,8 @@ exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
 const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
-const RETRY_DELAY = 10 * 1000; //10 seconds
+const RETRY_DELAY = 30 * 1000; //30 seconds
+let rateLimitted = false;
 function sleep(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
@@ -32247,6 +32248,10 @@ exports.dataToCar = dataToCar;
 //Upload car file to both web3.storage and nft.storage.
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
+        if (rateLimitted) {
+            yield sleep(RETRY_DELAY);
+            rateLimitted = false;
+        }
         let localCID = '';
         try {
             localCID = (yield car.getRoots()).toString();
@@ -32265,6 +32270,7 @@ function uploadCarFileIPFS(car, tokens) {
             return { ipfsHash: localCID };
         }
         catch (e) {
+            rateLimitted = true;
             console.log('error uploading car file:', e);
             return { ipfsHash: localCID, error: e };
         }
@@ -32280,11 +32286,10 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
             return ipfsHash;
         if (retries > 0) {
             console.log('Retrying upload', retries);
-            yield sleep(RETRY_DELAY);
             return uploadFileIPFS(filePath, tokens, retries - 1);
         }
         else {
-            console.log('No retires left. Returning locally generated CID');
+            console.log('No retries left. Returning locally generated CID');
             return ipfsHash;
         }
     });

@@ -3,7 +3,9 @@ import { NFTStorage, CarReader, Blob } from 'nft.storage';
 import { ApiTokens } from './apiTokens';
 import fs from 'fs';
 
-const RETRY_DELAY = 10 * 1000; //10 seconds
+const RETRY_DELAY = 30 * 1000; //30 seconds
+
+let rateLimitted = false;
 
 function sleep(ms: number) {
   return new Promise((resolve) => {
@@ -37,6 +39,10 @@ type uploadCarReturnType = {
 
 //Upload car file to both web3.storage and nft.storage.
 async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens): Promise<uploadCarReturnType>{
+  if (rateLimitted) {
+    await sleep(RETRY_DELAY);
+    rateLimitted = false;
+  }
   let localCID = '';
   try{
     localCID = (await car.getRoots()).toString();
@@ -57,6 +63,7 @@ async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens): Promise<upl
 
     return { ipfsHash: localCID };
   } catch (e: any){
+    rateLimitted = true;
     console.log('error uploading car file:', e);
     return { ipfsHash: localCID, error: e };
   }
@@ -75,10 +82,9 @@ export async function uploadFileIPFS(
   if (!error) return ipfsHash;
   if (retries > 0) {
     console.log('Retrying upload', retries);
-    await sleep(RETRY_DELAY);
     return uploadFileIPFS(filePath, tokens, retries - 1);
   } else {
-      console.log('No retires left. Returning locally generated CID');
+      console.log('No retries left. Returning locally generated CID');
       return ipfsHash;
   }
 }
