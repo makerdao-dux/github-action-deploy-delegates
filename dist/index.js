@@ -32217,7 +32217,7 @@ exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
 const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
-const RETRY_DELAY = 30 * 1000; //30 seconds
+const RETRY_DELAY = 60 * 1000; //60 seconds
 let rateLimitted = false;
 function sleep(ms) {
     return new Promise((resolve) => {
@@ -32285,7 +32285,6 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
         if (!error)
             return ipfsHash;
         if (retries > 0) {
-            console.log('Retrying upload', retries);
             return uploadFileIPFS(filePath, tokens, retries - 1);
         }
         else {

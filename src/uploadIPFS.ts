@@ -3,7 +3,7 @@ import { NFTStorage, CarReader, Blob } from 'nft.storage';
 import { ApiTokens } from './apiTokens';
 import fs from 'fs';
 
-const RETRY_DELAY = 30 * 1000; //30 seconds
+const RETRY_DELAY = 60 * 1000; //60 seconds
 
 let rateLimitted = false;
 
@@ -81,7 +81,6 @@ export async function uploadFileIPFS(
   const { ipfsHash, error } = await uploadCarFileIPFS(car, tokens);
   if (!error) return ipfsHash;
   if (retries > 0) {
-    console.log('Retrying upload', retries);
     return uploadFileIPFS(filePath, tokens, retries - 1);
   } else {
       console.log('No retries left. Returning locally generated CID');
