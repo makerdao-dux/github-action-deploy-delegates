@@ -31856,15 +31856,19 @@ function run() {
             const NFT_STORAGE_TOKEN = core.getInput("nft-storage-token");
             const tokens = { WEB3_STORAGE_TOKEN, NFT_STORAGE_TOKEN };
             const data = yield (0, parseDelegates_1.parseDelegates)(delegatesFolder, tagsPath);
+            const votingCommittees = yield (0, parseVotingCommittees_1.parseVotingCommittees)(delegateVotingCommitteesFolder);
             if (!data) {
                 throw new Error("No data found");
             }
+            const totalNumFileUploads = data.delegates.length + votingCommittees.length;
+            const numRetries = 1 + Math.ceil(totalNumFileUploads / 30); //currently rate limit triggers after 30 requests within 10 seconds
+            console.log('max retries:', numRetries);
             // Upload all the images to IPFS
             const delegatesResults = yield Promise.allSettled(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
                 const image = delegate.image;
                 try {
                     if (image) {
-                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens);
+                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens, numRetries);
                         delegate.image = hashImage;
                     }
                 }
@@ -31879,13 +31883,12 @@ function run() {
                 // @ts-ignore
                 .map(d => d.value);
             console.log('Reading voting committees');
-            const votingCommittees = yield (0, parseVotingCommittees_1.parseVotingCommittees)(delegateVotingCommitteesFolder);
             console.log('Uploading voting committees images to ipfs');
             const votingCommitteesWithImages = yield Promise.all(votingCommittees.map((votingCommittee) => __awaiter(this, void 0, void 0, function* () {
                 const image = votingCommittee.image;
                 try {
                     if (image) {
-                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens);
+                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens, numRetries);
                         votingCommittee.image = hashImage;
                     }
                 }
@@ -32217,7 +32220,8 @@ exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
 const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
-const RETRY_DELAY = 60 * 1000; //60 seconds
+//currently rate limit triggers after 30 requests within 10 seconds
+const RETRY_DELAY = 10 * 1000; //10 seconds
 let rateLimitted = false;
 function sleep(ms) {
     return new Promise((resolve) => {
@@ -32285,6 +32289,7 @@ function uploadFileIPFS(filePath, tokens, retries = 3) {
         if (!error)
             return ipfsHash;
         if (retries > 0) {
+            yield sleep(RETRY_DELAY);
             return uploadFileIPFS(filePath, tokens, retries - 1);
         }
         else {
