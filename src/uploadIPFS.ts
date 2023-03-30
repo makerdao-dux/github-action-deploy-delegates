@@ -30,30 +30,35 @@ export async function dataToCar(data: Buffer): Promise<CarReader> {
   return car;
 }
 
-//upload car file to both web3.storage and nft.storage
-//throws error if any CID doesn't match
-async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens){
+type uploadCarReturnType = {
+  ipfsHash: string,
+  error?: any
+}
 
-  const localCID = (await car.getRoots()).toString();
+//Upload car file to both web3.storage and nft.storage.
+async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens): Promise<uploadCarReturnType>{
+  let localCID = '';
   try{
-  //web3.storage
-  if (tokens.WEB3_STORAGE_TOKEN){
-    const web3StorageClient = new Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
-    const web3StorageCID = await web3StorageClient.putCar(car);
-    checkCIDs(localCID, web3StorageCID, 'web3.storage');
-  }
+    localCID = (await car.getRoots()).toString();
 
-  //nft.storage
-  if (tokens.NFT_STORAGE_TOKEN){
-    const nftStorageClient = new NFTStorage({ token: tokens.NFT_STORAGE_TOKEN })
-    const nftStorageCID = await nftStorageClient.storeCar(car);
-    checkCIDs(localCID, nftStorageCID, 'nft.storage');
-  }
+    //web3.storage
+    if (tokens.WEB3_STORAGE_TOKEN){
+      const web3StorageClient = new Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
+      const web3StorageCID = await web3StorageClient.putCar(car);
+      checkCIDs(localCID, web3StorageCID, 'web3.storage');
+    }
 
-  return localCID;
-  } catch (e){
-    console.log('error in uploadCarFileIPFS, returning localCID: ', e);
-    return localCID;
+    //nft.storage
+    if (tokens.NFT_STORAGE_TOKEN){
+      const nftStorageClient = new NFTStorage({ token: tokens.NFT_STORAGE_TOKEN })
+      const nftStorageCID = await nftStorageClient.storeCar(car);
+      checkCIDs(localCID, nftStorageCID, 'nft.storage');
+    }
+
+    return { ipfsHash: localCID };
+  } catch (e: any){
+    console.log('error uploading car file:', e);
+    return { ipfsHash: localCID, error: e };
   }
 }
 
@@ -63,28 +68,18 @@ export async function uploadFileIPFS(
   tokens: ApiTokens,
   retries: number = 3
 ): Promise<string> {
-  let car;
-  try {
-    console.log("Uploading file to IPFS....", filePath, 'Retries remaining: ', retries);
-    const fileContents = fs.readFileSync(filePath);
-    car = await dataToCar(fileContents);
-    return uploadCarFileIPFS(car, tokens);
-  } catch(e: any) {
-    if (retries > 0) {
-      console.log('Retrying upload', retries);
-      await sleep(RETRY_DELAY);
-      return uploadFileIPFS(filePath, tokens, retries - 1);
-    } else {
-      if (car) {
-        console.error('error uploading file', filePath, e);
-        const localCID = (await car.getRoots()).toString();
-        console.error('using locally generated CID: ', localCID);
-        return localCID;
-      } else {
-        console.error('propogating error up');
-        throw e;
-      }
-    }
+  console.log("Uploading file to IPFS....", filePath, 'Retries remaining: ', retries);
+  const fileContents = fs.readFileSync(filePath);
+  const car = await dataToCar(fileContents);
+  const { ipfsHash, error } = await uploadCarFileIPFS(car, tokens);
+  if (!error) return ipfsHash;
+  if (retries > 0) {
+    console.log('Retrying upload', retries);
+    await sleep(RETRY_DELAY);
+    return uploadFileIPFS(filePath, tokens, retries - 1);
+  } else {
+      console.log('No retires left. Returning locally generated CID');
+      return ipfsHash;
   }
 }
 
@@ -92,7 +87,8 @@ export async function uploadTextIPFS(
   text: string,
   tokens: ApiTokens,
 ): Promise<string> {
-  console.log("Uploading text: ", text);
   const car = await dataToCar(Buffer.from(text));
-  return uploadCarFileIPFS(car, tokens);
+  const {ipfsHash, error} = await uploadCarFileIPFS(car, tokens);
+  if (error) throw new Error('error uploading text to IPFS');
+  return ipfsHash;
 }

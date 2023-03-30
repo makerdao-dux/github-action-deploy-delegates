@@ -32244,12 +32244,12 @@ function dataToCar(data) {
     });
 }
 exports.dataToCar = dataToCar;
-//upload car file to both web3.storage and nft.storage
-//throws error if any CID doesn't match
+//Upload car file to both web3.storage and nft.storage.
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        const localCID = (yield car.getRoots()).toString();
+        let localCID = '';
         try {
+            localCID = (yield car.getRoots()).toString();
             //web3.storage
             if (tokens.WEB3_STORAGE_TOKEN) {
                 const web3StorageClient = new web3_storage_1.Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
@@ -32262,50 +32262,41 @@ function uploadCarFileIPFS(car, tokens) {
                 const nftStorageCID = yield nftStorageClient.storeCar(car);
                 checkCIDs(localCID, nftStorageCID, 'nft.storage');
             }
-            return localCID;
+            return { ipfsHash: localCID };
         }
         catch (e) {
-            console.log('error in uploadCarFileIPFS, returning localCID: ', e);
-            return localCID;
+            console.log('error uploading car file:', e);
+            return { ipfsHash: localCID, error: e };
         }
     });
 }
 function uploadFileIPFS(filePath, tokens, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
-        let car;
-        try {
-            console.log("Uploading file to IPFS....", filePath, 'Retries remaining: ', retries);
-            const fileContents = fs_1.default.readFileSync(filePath);
-            car = yield dataToCar(fileContents);
-            return uploadCarFileIPFS(car, tokens);
+        console.log("Uploading file to IPFS....", filePath, 'Retries remaining: ', retries);
+        const fileContents = fs_1.default.readFileSync(filePath);
+        const car = yield dataToCar(fileContents);
+        const { ipfsHash, error } = yield uploadCarFileIPFS(car, tokens);
+        if (!error)
+            return ipfsHash;
+        if (retries > 0) {
+            console.log('Retrying upload', retries);
+            yield sleep(RETRY_DELAY);
+            return uploadFileIPFS(filePath, tokens, retries - 1);
         }
-        catch (e) {
-            if (retries > 0) {
-                console.log('Retrying upload', retries);
-                yield sleep(RETRY_DELAY);
-                return uploadFileIPFS(filePath, tokens, retries - 1);
-            }
-            else {
-                if (car) {
-                    console.error('error uploading file', filePath, e);
-                    const localCID = (yield car.getRoots()).toString();
-                    console.error('using locally generated CID: ', localCID);
-                    return localCID;
-                }
-                else {
-                    console.error('propogating error up');
-                    throw e;
-                }
-            }
+        else {
+            console.log('No retires left. Returning locally generated CID');
+            return ipfsHash;
         }
     });
 }
 exports.uploadFileIPFS = uploadFileIPFS;
 function uploadTextIPFS(text, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        console.log("Uploading text: ", text);
         const car = yield dataToCar(Buffer.from(text));
-        return uploadCarFileIPFS(car, tokens);
+        const { ipfsHash, error } = yield uploadCarFileIPFS(car, tokens);
+        if (error)
+            throw new Error('error uploading text to IPFS');
+        return ipfsHash;
     });
 }
 exports.uploadTextIPFS = uploadTextIPFS;
