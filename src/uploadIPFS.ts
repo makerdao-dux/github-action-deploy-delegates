@@ -33,8 +33,9 @@ export async function dataToCar(data: Buffer): Promise<CarReader> {
 //upload car file to both web3.storage and nft.storage
 //throws error if any CID doesn't match
 async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens){
-  const localCID = (await car.getRoots()).toString();
 
+  const localCID = (await car.getRoots()).toString();
+  try{
   //web3.storage
   if (tokens.WEB3_STORAGE_TOKEN){
     const web3StorageClient = new Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
@@ -50,6 +51,10 @@ async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens){
   }
 
   return localCID;
+  } catch (e){
+    console.log('error in uploadCarFileIPFS, returning localCID: ', e);
+    return localCID;
+  }
 }
 
 
