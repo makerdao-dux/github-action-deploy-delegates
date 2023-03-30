@@ -32249,19 +32249,25 @@ exports.dataToCar = dataToCar;
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
         const localCID = (yield car.getRoots()).toString();
-        //web3.storage
-        if (tokens.WEB3_STORAGE_TOKEN) {
-            const web3StorageClient = new web3_storage_1.Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
-            const web3StorageCID = yield web3StorageClient.putCar(car);
-            checkCIDs(localCID, web3StorageCID, 'web3.storage');
+        try {
+            //web3.storage
+            if (tokens.WEB3_STORAGE_TOKEN) {
+                const web3StorageClient = new web3_storage_1.Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
+                const web3StorageCID = yield web3StorageClient.putCar(car);
+                checkCIDs(localCID, web3StorageCID, 'web3.storage');
+            }
+            //nft.storage
+            if (tokens.NFT_STORAGE_TOKEN) {
+                const nftStorageClient = new nft_storage_1.NFTStorage({ token: tokens.NFT_STORAGE_TOKEN });
+                const nftStorageCID = yield nftStorageClient.storeCar(car);
+                checkCIDs(localCID, nftStorageCID, 'nft.storage');
+            }
+            return localCID;
         }
-        //nft.storage
-        if (tokens.NFT_STORAGE_TOKEN) {
-            const nftStorageClient = new nft_storage_1.NFTStorage({ token: tokens.NFT_STORAGE_TOKEN });
-            const nftStorageCID = yield nftStorageClient.storeCar(car);
-            checkCIDs(localCID, nftStorageCID, 'nft.storage');
+        catch (e) {
+            console.log('error in uploadCarFileIPFS, returning localCID: ', e);
+            return localCID;
         }
-        return localCID;
     });
 }
 function uploadFileIPFS(filePath, tokens, retries = 3) {
