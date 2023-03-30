@@ -31861,7 +31861,7 @@ function run() {
                 throw new Error("No data found");
             }
             const totalNumFileUploads = data.delegates.length + votingCommittees.length;
-            const numRetries = 1 + Math.ceil(totalNumFileUploads / 30); //currently rate limit triggers after 30 requests within 10 seconds
+            const numRetries = 2 + Math.ceil(totalNumFileUploads / 30); //ensure at least 3 retries. Currently rate limit triggers after 30 requests within 10 seconds, so scale up retries as we hit more rate limits
             console.log('max retries:', numRetries);
             // Upload all the images to IPFS
             const delegatesResults = yield Promise.allSettled(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
