@@ -1726,10 +1726,6 @@ function checkBypass(reqUrl) {
     if (!reqUrl.hostname) {
         return false;
     }
-    const reqHost = reqUrl.hostname;
-    if (isLoopbackAddress(reqHost)) {
-        return true;
-    }
     const noProxy = process.env['no_proxy'] || process.env['NO_PROXY'] || '';
     if (!noProxy) {
         return false;
@@ -1755,24 +1751,13 @@ function checkBypass(reqUrl) {
         .split(',')
         .map(x => x.trim().toUpperCase())
         .filter(x => x)) {
-        if (upperNoProxyItem === '*' ||
-            upperReqHosts.some(x => x === upperNoProxyItem ||
-                x.endsWith(`.${upperNoProxyItem}`) ||
-                (upperNoProxyItem.startsWith('.') &&
-                    x.endsWith(`${upperNoProxyItem}`)))) {
+        if (upperReqHosts.some(x => x === upperNoProxyItem)) {
             return true;
         }
     }
     return false;
 }
 exports.checkBypass = checkBypass;
-function isLoopbackAddress(host) {
-    const hostLower = host.toLowerCase();
-    return (hostLower === 'localhost' ||
-        hostLower.startsWith('127.') ||
-        hostLower.startsWith('[::1]') ||
-        hostLower.startsWith('[0:0:0:0:0:0:0:1]'));
-}
 //# sourceMappingURL=proxy.js.map
 
 /***/ }),
@@ -9725,7 +9710,7 @@ function patch (fs) {
         var backoff = 0;
         fs$rename(from, to, function CB (er) {
           if (er
-              && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY")
+              && (er.code === "EACCES" || er.code === "EPERM")
               && Date.now() - start < 60000) {
             setTimeout(function() {
               fs.stat(to, function (stater, st) {
@@ -31871,15 +31856,19 @@ function run() {
             const NFT_STORAGE_TOKEN = core.getInput("nft-storage-token");
             const tokens = { WEB3_STORAGE_TOKEN, NFT_STORAGE_TOKEN };
             const data = yield (0, parseDelegates_1.parseDelegates)(delegatesFolder, tagsPath);
+            const votingCommittees = yield (0, parseVotingCommittees_1.parseVotingCommittees)(delegateVotingCommitteesFolder);
             if (!data) {
                 throw new Error("No data found");
             }
+            const totalNumFileUploads = data.delegates.length + votingCommittees.length;
+            const numRetries = 2 + Math.ceil(totalNumFileUploads / 30); //ensure at least 3 retries. Currently rate limit triggers after 30 requests within 10 seconds, so scale up retries as we hit more rate limits
+            console.log('max retries:', numRetries);
             // Upload all the images to IPFS
-            const delegates = yield Promise.all(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
+            const delegatesResults = yield Promise.allSettled(data.delegates.map((delegate) => __awaiter(this, void 0, void 0, function* () {
                 const image = delegate.image;
                 try {
                     if (image) {
-                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens);
+                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens, numRetries);
                         delegate.image = hashImage;
                     }
                 }
@@ -31889,14 +31878,17 @@ function run() {
                 }
                 return delegate;
             })));
+            const delegates = delegatesResults.
+                filter(d => d.status === 'fulfilled')
+                // @ts-ignore
+                .map(d => d.value);
             console.log('Reading voting committees');
-            const votingCommittees = yield (0, parseVotingCommittees_1.parseVotingCommittees)(delegateVotingCommitteesFolder);
             console.log('Uploading voting committees images to ipfs');
             const votingCommitteesWithImages = yield Promise.all(votingCommittees.map((votingCommittee) => __awaiter(this, void 0, void 0, function* () {
                 const image = votingCommittee.image;
                 try {
                     if (image) {
-                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens);
+                        const hashImage = yield (0, uploadIPFS_1.uploadFileIPFS)(image, tokens, numRetries);
                         votingCommittee.image = hashImage;
                     }
                 }
@@ -32228,6 +32220,14 @@ exports.uploadTextIPFS = exports.uploadFileIPFS = exports.dataToCar = void 0;
 const web3_storage_1 = __nccwpck_require__(8272);
 const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
+//currently rate limit triggers after 30 requests within 10 seconds
+const RETRY_DELAY = 10 * 1000; //10 seconds
+let rateLimitted = false;
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
 function checkCIDs(localCID, remoteCID, remoteServiceName) {
     if (localCID === remoteCID) {
         console.log(`${remoteServiceName} CID equals CID created locally: ${localCID}`);
@@ -32249,51 +32249,63 @@ function dataToCar(data) {
     });
 }
 exports.dataToCar = dataToCar;
-//upload car file to both web3.storage and nft.storage
-//throws error if any CID doesn't match
+//Upload car file to both web3.storage and nft.storage.
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        const localCID = (yield car.getRoots()).toString();
-        //web3.storage
-        if (tokens.WEB3_STORAGE_TOKEN) {
-            const web3StorageClient = new web3_storage_1.Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
-            const web3StorageCID = yield web3StorageClient.putCar(car);
-            checkCIDs(localCID, web3StorageCID, 'web3.storage');
+        if (rateLimitted) {
+            yield sleep(RETRY_DELAY);
+            rateLimitted = false;
         }
-        //nft.storage
-        if (tokens.NFT_STORAGE_TOKEN) {
-            const nftStorageClient = new nft_storage_1.NFTStorage({ token: tokens.NFT_STORAGE_TOKEN });
-            const nftStorageCID = yield nftStorageClient.storeCar(car);
-            checkCIDs(localCID, nftStorageCID, 'nft.storage');
+        let localCID = '';
+        try {
+            localCID = (yield car.getRoots()).toString();
+            //web3.storage
+            if (tokens.WEB3_STORAGE_TOKEN) {
+                const web3StorageClient = new web3_storage_1.Web3Storage({ token: tokens.WEB3_STORAGE_TOKEN });
+                const web3StorageCID = yield web3StorageClient.putCar(car);
+                checkCIDs(localCID, web3StorageCID, 'web3.storage');
+            }
+            //nft.storage
+            if (tokens.NFT_STORAGE_TOKEN) {
+                const nftStorageClient = new nft_storage_1.NFTStorage({ token: tokens.NFT_STORAGE_TOKEN });
+                const nftStorageCID = yield nftStorageClient.storeCar(car);
+                checkCIDs(localCID, nftStorageCID, 'nft.storage');
+            }
+            return { ipfsHash: localCID };
         }
-        return localCID;
+        catch (e) {
+            rateLimitted = true;
+            console.log('error uploading car file:', e);
+            return { ipfsHash: localCID, error: e };
+        }
     });
 }
 function uploadFileIPFS(filePath, tokens, retries = 3) {
     return __awaiter(this, void 0, void 0, function* () {
-        try {
-            console.log("Uploading file to IPFS...", filePath, 'Retries remaining: ', retries);
-            const fileContents = fs_1.default.readFileSync(filePath);
-            const car = yield dataToCar(fileContents);
-            return uploadCarFileIPFS(car, tokens);
+        console.log("Uploading file to IPFS....", filePath, 'Retries remaining: ', retries);
+        const fileContents = fs_1.default.readFileSync(filePath);
+        const car = yield dataToCar(fileContents);
+        const { ipfsHash, error } = yield uploadCarFileIPFS(car, tokens);
+        if (!error)
+            return ipfsHash;
+        if (retries > 0) {
+            yield sleep(RETRY_DELAY);
+            return uploadFileIPFS(filePath, tokens, retries - 1);
         }
-        catch (e) {
-            if (retries > 0) {
-                console.log('Retrying upload', retries);
-                return uploadFileIPFS(filePath, tokens, retries - 1);
-            }
-            else {
-                throw e;
-            }
+        else {
+            console.log('No retries left. Returning locally generated CID');
+            return ipfsHash;
         }
     });
 }
 exports.uploadFileIPFS = uploadFileIPFS;
 function uploadTextIPFS(text, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        console.log("Uploading text: ", text);
         const car = yield dataToCar(Buffer.from(text));
-        return uploadCarFileIPFS(car, tokens);
+        const { ipfsHash, error } = yield uploadCarFileIPFS(car, tokens);
+        if (error)
+            throw new Error('error uploading text to IPFS');
+        return ipfsHash;
     });
 }
 exports.uploadTextIPFS = uploadTextIPFS;
