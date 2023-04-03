@@ -6,7 +6,6 @@ import fs from 'fs';
 //currently rate limit triggers after 30 requests within 10 seconds
 const RETRY_DELAY = 10 * 1000; //10 seconds
 
-let rateLimitted = false;
 
 function sleep(ms: number) {
   return new Promise((resolve) => {
@@ -40,10 +39,6 @@ type uploadCarReturnType = {
 
 //Upload car file to both web3.storage and nft.storage.
 async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens): Promise<uploadCarReturnType>{
-  if (rateLimitted) {
-    await sleep(RETRY_DELAY);
-    rateLimitted = false;
-  }
   let localCID = '';
   try{
     localCID = (await car.getRoots()).toString();
@@ -64,7 +59,6 @@ async function uploadCarFileIPFS(car: CarReader, tokens: ApiTokens): Promise<upl
 
     return { ipfsHash: localCID };
   } catch (e: any){
-    rateLimitted = true;
     console.log('error uploading car file:', e);
     return { ipfsHash: localCID, error: e };
   }
