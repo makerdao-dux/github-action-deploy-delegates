@@ -4,6 +4,7 @@ on: # rebuild any PRs and main branch changes
   push:
     branches:
       - master
+      - add-back-node-modules
       - 'releases/*'
 
 jobs:
