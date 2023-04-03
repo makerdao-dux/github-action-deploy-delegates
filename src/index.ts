@@ -15,19 +15,24 @@ async function run() {
     const tokens =  { WEB3_STORAGE_TOKEN, NFT_STORAGE_TOKEN };
 
     const data = await parseDelegates(delegatesFolder, tagsPath);
+    const votingCommittees = await parseVotingCommittees(delegateVotingCommitteesFolder);
 
     if (!data) {
       throw new Error("No data found");
     }
 
+    const totalNumFileUploads = data.delegates.length + votingCommittees.length;
+    const numRetries = 2 + Math.ceil(totalNumFileUploads / 30); //ensure at least 3 retries. Currently rate limit triggers after 30 requests within 10 seconds, so scale up retries as we hit more rate limits
+    console.log('max retries:', numRetries);
+
     // Upload all the images to IPFS
-    const delegates = await Promise.all(
+    const delegatesResults = await Promise.allSettled(
       data.delegates.map(async (delegate) => {
         const image = delegate.image;
 
         try {
           if (image) {
-            const hashImage = await uploadFileIPFS(image, tokens);
+            const hashImage = await uploadFileIPFS(image, tokens, numRetries);
             delegate.image = hashImage;
           }
         } catch (e: any) {
@@ -38,9 +43,11 @@ async function run() {
         return delegate;
       })
     );
-
+    const delegates = delegatesResults.
+      filter(d => d.status === 'fulfilled')
+      // @ts-ignore
+      .map(d => d.value);
     console.log('Reading voting committees');
-    const votingCommittees = await parseVotingCommittees(delegateVotingCommitteesFolder);
 
     console.log('Uploading voting committees images to ipfs');
     const votingCommitteesWithImages = await Promise.all(
@@ -50,7 +57,7 @@ async function run() {
         try {
 
           if (image) {
-            const hashImage = await uploadFileIPFS(image, tokens);
+            const hashImage = await uploadFileIPFS(image, tokens, numRetries);
             votingCommittee.image = hashImage;
           }
         } catch (e: any) {
