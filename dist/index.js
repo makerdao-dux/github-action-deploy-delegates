@@ -32222,7 +32222,6 @@ const nft_storage_1 = __nccwpck_require__(9510);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 //currently rate limit triggers after 30 requests within 10 seconds
 const RETRY_DELAY = 10 * 1000; //10 seconds
-let rateLimitted = false;
 function sleep(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
@@ -32252,10 +32251,6 @@ exports.dataToCar = dataToCar;
 //Upload car file to both web3.storage and nft.storage.
 function uploadCarFileIPFS(car, tokens) {
     return __awaiter(this, void 0, void 0, function* () {
-        if (rateLimitted) {
-            yield sleep(RETRY_DELAY);
-            rateLimitted = false;
-        }
         let localCID = '';
         try {
             localCID = (yield car.getRoots()).toString();
@@ -32274,7 +32269,6 @@ function uploadCarFileIPFS(car, tokens) {
             return { ipfsHash: localCID };
         }
         catch (e) {
-            rateLimitted = true;
             console.log('error uploading car file:', e);
             return { ipfsHash: localCID, error: e };
         }
