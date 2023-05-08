@@ -10,7 +10,7 @@ jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - run: |
           npm install
       - run: |
@@ -19,7 +19,7 @@ jobs:
   test-unit: # run tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - run: |
           npm install
       - run: |
@@ -27,7 +27,7 @@ jobs:
   test: # run the action, with data from __tests__ folder
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: ./
         with:
           delegates-folder: '__tests__/delegates'
